@@ -1,0 +1,11 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "base_tag": "v0.42.0",
+  "base_commit": "8f046f239f3d6dcfc1fa0a25343be926a233a5a5",
+  "build_version": "0.42.0+reconnect-fix.3",
+  "target": "x86_64-pc-windows-msvc",
+  "tested_driver_version": "9.9.1001.1005",
+  "driver_protocol": 9,
+  "patch_sha256": "a1474bc9e973aa6a22fa16823287819855303af976c805ddb242d30dd0d3e3d2",
+  "binary_sha256": "de25e85b104b58574bceca3180552e5baba4457c64f1c2b969af71456fe986a7"
+}

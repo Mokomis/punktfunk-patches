@@ -1,0 +1,344 @@
+--- a/crates/pf-vdisplay/src/lib.rs
++++ b/crates/pf-vdisplay/src/lib.rs
+@@ -9,6 +9,9 @@
+ // `monitors`/`lifecycle` exist for the Linux backends and are unused there. The
+ // Windows backend (`vdisplay/windows/`) is not enforced; review has to catch orphans.
+ #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
++
++#[cfg(any(windows, test))]
++mod pinger_wait;
+ 
+ use anyhow::Result;
+ pub use punktfunk_core::Mode;
+--- a/crates/pf-vdisplay/src/vdisplay/windows/manager.rs
++++ b/crates/pf-vdisplay/src/vdisplay/windows/manager.rs
+@@ -935,8 +935,8 @@
+         }
+     }
+ 
+-    /// Start the device-level watchdog pinger if it is not running. One thread
+-    /// serves every slot — any IOCTL bumps the watchdog.
++    /// Start one keepalive worker for every slot. Its interval is interruptible
++    /// so the last slot can stop it before restoring the desktop.
+     fn ensure_pinger(&'static self) {
+         let mut guard = self.pinger.lock().unwrap();
+         if guard.is_some() {
+@@ -986,7 +986,7 @@
+                             }
+                         }
+                     }
+-                    thread::sleep(interval);
++                    crate::pinger_wait::wait(&stop_t, interval);
+                 }
+             });
+         // Not `thread::spawn`: that panics if the OS refuses the thread, and
+@@ -1007,12 +1007,10 @@
+         *guard = Some(Pinger { stop, thread });
+     }
+ 
+-    /// Stop and join the device-level pinger (the last slot was just torn down).
+-    /// Join is bounded by the ping interval (watchdog/3 seconds).
++    /// Wake and join the keepalive worker before restoring the last slot.
+     fn stop_pinger(&self) {
+         if let Some(p) = self.pinger.lock().unwrap().take() {
+-            p.stop.store(true, Ordering::Relaxed);
+-            let _ = p.thread.join();
++            crate::pinger_wait::stop_and_join(&p.stop, p.thread);
+         }
+     }
+ 
+--- /dev/null
++++ b/crates/pf-vdisplay/src/pinger_wait.rs
+@@ -0,0 +1,49 @@
++//! Interruptible interval between virtual-display keepalive calls.
++
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::thread::{self, JoinHandle};
++use std::time::Duration;
++
++pub(crate) fn wait(stop: &AtomicBool, interval: Duration) {
++    if !stop.load(Ordering::Relaxed) {
++        thread::park_timeout(interval);
++    }
++}
++
++pub(crate) fn stop_and_join(stop: &AtomicBool, worker: JoinHandle<()>) {
++    stop.store(true, Ordering::Relaxed);
++    worker.thread().unpark();
++    let _ = worker.join();
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{mpsc, Arc};
++    use std::time::Instant;
++
++    #[test]
++    fn teardown_wakes_a_long_keepalive_interval() {
++        let stop = Arc::new(AtomicBool::new(false));
++        let flag = stop.clone();
++        let (ready, started) = mpsc::channel();
++        let worker = thread::spawn(move || {
++            ready.send(()).unwrap();
++            while !flag.load(Ordering::Relaxed) {
++                wait(&flag, Duration::from_secs(3));
++            }
++        });
++        started.recv().unwrap();
++        let begin = Instant::now();
++        stop_and_join(&stop, worker);
++        assert!(begin.elapsed() < Duration::from_millis(500));
++    }
++
++    #[test]
++    fn stop_before_the_wait_returns_without_parking() {
++        let stop = AtomicBool::new(true);
++        let begin = Instant::now();
++        wait(&stop, Duration::from_secs(3));
++        assert!(begin.elapsed() < Duration::from_millis(500));
++    }
++}
+--- a/crates/pf-vdisplay/src/vdisplay/admission.rs
++++ b/crates/pf-vdisplay/src/vdisplay/admission.rs
+@@ -189,6 +189,17 @@
+ /// session's flag is signaled.
+ pub fn preempt_same_identity(req_identity: Option<[u8; 32]>) -> Vec<Arc<AtomicBool>> {
+     same_identity_stops(req_identity, &table().lock().unwrap())
++}
++
++/// All targeted sessions have left the admission table. A set stop flag alone is not release.
++pub fn preemptions_finished(stops: &[Arc<AtomicBool>]) -> bool {
++    stops_absent(stops, &table().lock().unwrap())
++}
++
++fn stops_absent(stops: &[Arc<AtomicBool>], live: &[LiveSession]) -> bool {
++    !live
++        .iter()
++        .any(|s| stops.iter().any(|stop| Arc::ptr_eq(stop, &s.stop)))
+ }
+ 
+ /// Register an admitted session; the guard removes it on drop. Call after
+@@ -258,6 +269,22 @@
+     }
+ 
+     #[test]
++    fn preemption_waits_for_every_target_to_leave() {
++        let first = sess(Some(1), (2560, 1440, 60));
++        let second = sess(Some(1), (2560, 1440, 60));
++        let unrelated = sess(Some(2), (2560, 1440, 60));
++        let stops = vec![first.stop.clone(), second.stop.clone()];
++        first.stop.store(true, Ordering::SeqCst);
++        second.stop.store(true, Ordering::SeqCst);
++        assert!(!stops_absent(
++            &stops,
++            &[first, second.clone(), unrelated.clone()]
++        ));
++        assert!(!stops_absent(&stops, &[second, unrelated.clone()]));
++        assert!(stops_absent(&stops, &[unrelated]));
++    }
++
++    #[test]
+     fn no_live_session_is_always_separate() {
+         for c in [
+             ModeConflict::Separate,
+--- a/crates/punktfunk-host/src/native.rs
++++ b/crates/punktfunk-host/src/native.rs
+@@ -64,6 +64,7 @@
+ use input::{input_thread, ClientInput};
+ 
+ mod handshake;
++mod session_wait;
+ /// `PUNKTFUNK_WIRE_MTU`, the control-connection path-MTU watch, and the per-peer shard clamp.
+ mod wire_mtu;
+ 
+@@ -1396,7 +1397,8 @@
+ /// The session proper, after admission. Carrier-agnostic: the control stream is a [`link::CtlSend`]
+ /// / [`link::CtlRecv`] pair, datagrams go through [`link::SessionLink`], and video through
+ /// whatever [`DataPlane`] the caller built. The device is the link's
+-/// [`link::SessionLink::peer_fingerprint`], whichever plane admitted it.
++/// [`link::SessionLink::peer_fingerprint`], whichever plane admitted it. Preemption skips
++/// the video drain and releases audio/input before the admission guard drops.
+ pub(crate) async fn run_admitted(
+     conn: link::SessionLink,
+     send: link::CtlSend,
+@@ -2087,8 +2089,10 @@
+                 anyhow::bail!("stream thread wedged after stop");
+             }
+         }
+-        // Drain window before close.
+-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
++        // Normal completion drains queued video; preemption closes the side planes immediately.
++        session_wait::wait_until(std::time::Duration::from_secs(1), || {
++            stop.load(Ordering::SeqCst)
++        }).await;
+         Ok(())
+     }
+     .await;
+--- a/crates/punktfunk-host/src/native/handshake.rs
++++ b/crates/punktfunk-host/src/native/handshake.rs
+@@ -320,8 +320,23 @@
+     pub(super) joined: Option<(crate::vdisplay::admission::LiveDisplay, (u32, u32))>,
+ }
+ 
++/// Wait for full session teardown, bounded by the existing handoff grace.
++async fn wait_for_preemptions(stops: &[std::sync::Arc<std::sync::atomic::AtomicBool>]) {
++    let began = std::time::Instant::now();
++    let released = super::session_wait::wait_until(std::time::Duration::from_millis(1500), || {
++        crate::vdisplay::admission::preemptions_finished(stops)
++    })
++    .await;
++    tracing::info!(
++        released,
++        elapsed_ms = began.elapsed().as_millis() as u64,
++        "session handoff release wait"
++    );
++}
++
+ /// Hello → Welcome → Start. Borrows the control streams; the caller keeps them for mid-stream
+-/// renegotiation. `first` is the already-read first control message.
++/// renegotiation. `first` is the already-read first control message. Preempted sessions
++/// get up to 1500 ms to release; a completed handoff proceeds immediately.
+ #[allow(clippy::too_many_arguments)]
+ pub(super) async fn negotiate(
+     conn: &super::link::SessionLink,
+@@ -421,8 +436,7 @@
+         use crate::vdisplay::admission::{admit, preempt_same_identity, Admission};
+         let peer_fp = conn.peer_fingerprint();
+ 
+-        // Own prior session (QUIC idle has not fired). Stop it and wait the release grace so
+-        // this reconnect reuses the kept display. Runs before we register, so we never stop ourselves.
++        // Stop prior sessions before registering this one; wait for teardown within the grace.
+         let own_zombies = preempt_same_identity(peer_fp);
+         if !own_zombies.is_empty() {
+             tracing::info!(
+@@ -432,8 +446,7 @@
+             for z in &own_zombies {
+                 z.store(true, Ordering::SeqCst);
+             }
+-            // 1500 ms: same release grace as steal, so the zombie drops its display before we acquire.
+-            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
++            wait_for_preemptions(&own_zombies).await;
+         }
+ 
+         match admit(peer_fp) {
+@@ -468,8 +481,7 @@
+                 for v in &victims {
+                     v.store(true, Ordering::SeqCst);
+                 }
+-                // 1500 ms release grace so victims drop their display before we acquire.
+-                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
++                wait_for_preemptions(&victims).await;
+             }
+             Admission::Reject(reason) => {
+                 tracing::warn!("mode-conflict: REJECT — {reason}");
+--- /dev/null
++++ b/crates/punktfunk-host/src/native/session_wait.rs
+@@ -0,0 +1,66 @@
++//! Bounded waits that finish when session lifecycle state changes.
++
++use std::time::Duration;
++
++/// Poll without holding session locks across await. The deadline also bounds a wedged teardown.
++pub(super) async fn wait_until(limit: Duration, mut ready: impl FnMut() -> bool) -> bool {
++    let deadline = tokio::time::Instant::now() + limit;
++    loop {
++        if ready() {
++            return true;
++        }
++        let now = tokio::time::Instant::now();
++        if now >= deadline {
++            return false;
++        }
++        tokio::time::sleep_until((now + Duration::from_millis(10)).min(deadline)).await;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{
++        atomic::{AtomicBool, Ordering},
++        Arc,
++    };
++    use std::time::Instant;
++
++    fn runtime() -> tokio::runtime::Runtime {
++        tokio::runtime::Builder::new_current_thread()
++            .enable_time()
++            .build()
++            .unwrap()
++    }
++
++    #[test]
++    fn completed_handoff_has_no_grace_delay() {
++        let began = Instant::now();
++        assert!(runtime().block_on(wait_until(Duration::from_millis(1500), || true)));
++        assert!(began.elapsed() < Duration::from_millis(250));
++    }
++
++    #[test]
++    fn pending_handoff_is_bounded() {
++        let began = Instant::now();
++        assert!(!runtime().block_on(wait_until(Duration::from_millis(50), || false)));
++        assert!(began.elapsed() >= Duration::from_millis(50));
++        assert!(began.elapsed() < Duration::from_millis(500));
++    }
++
++    #[test]
++    fn preemption_interrupts_the_video_drain() {
++        let stop = Arc::new(AtomicBool::new(false));
++        let signal = stop.clone();
++        let began = Instant::now();
++        let worker = std::thread::spawn(move || {
++            std::thread::sleep(Duration::from_millis(30));
++            signal.store(true, Ordering::SeqCst);
++        });
++        assert!(
++            runtime().block_on(wait_until(Duration::from_secs(1), || stop.load(Ordering::SeqCst)))
++        );
++        worker.join().unwrap();
++        assert!(began.elapsed() < Duration::from_millis(500));
++    }
++}
+--- a/crates/punktfunk-host/src/native/audio.rs
++++ b/crates/punktfunk-host/src/native/audio.rs
+@@ -416,7 +416,8 @@
+ /// Desktop capture → the session's resolved plane (Opus on `AUDIO_MAGIC`/`AUDIO_RED_MAGIC`,
+ /// or PCM on `AUDIO_PCM_MAGIC`) at negotiated `channels` (2 / 6 = 5.1 / 8 = 7.1, wire order
+ /// FL FR FC LFE RL RR SL SR). Capturer comes from and returns to [`AudioCapSlot`] through a
+-/// [`CaptureLease`]; [`Pacer`] decides when each frame leaves.
++/// [`CaptureLease`]; [`Pacer`] decides when each frame leaves. Windows idle waits
++/// are bounded so session stop can release the parked capture promptly.
+ ///
+ /// `plane` is the format `Welcome` stated — read back by the caller, never recomputed, so
+ /// the promised wire and the sent wire cannot disagree.
+@@ -633,12 +634,25 @@
+                 );
+             });
+         }
+-        // Wake on a chunk or the next owed slot, whichever first. Waiting only on capture
+-        // made a hole cost more than the audio it swallowed — see [`InfillPolicy`].
++        // Wake for an owed slot or a chunk. A silent Windows sink also checks session stop.
+         let waited = match pacer.wake_budget(std::time::Instant::now(), acc.len()) {
+-            None => lease.live().next_chunk(),
++            None => {
++                #[cfg(windows)]
++                {
++                    lease
++                        .live()
++                        .next_chunk_within(std::time::Duration::from_millis(100))
++                }
++                #[cfg(not(windows))]
++                {
++                    lease.live().next_chunk()
++                }
++            }
+             Some(budget) => lease.live().next_chunk_within(budget),
+         };
++        if stop.load(Ordering::SeqCst) {
++            break 'session;
++        }
+         let chunk = match waited {
+             Ok(c) => c,
+             Err(e) => {
