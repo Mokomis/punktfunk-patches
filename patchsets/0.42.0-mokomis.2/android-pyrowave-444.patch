@@ -1,0 +1,110 @@
+diff --git a/clients/android/native/src/session/connect.rs b/clients/android/native/src/session/connect.rs
+index 4d7879728..ea39b97bb 100644
+--- a/clients/android/native/src/session/connect.rs
++++ b/clients/android/native/src/session/connect.rs
+@@ -226,11 +226,14 @@ fn audio_rate_is_openable(_rate_hz: u32, _channels: u8) -> bool {
+ /// `multi_slice` is decoder truth: Kotlin probes every decoder this device would use because
+ /// Amlogic can wedge on multi-slice AUs. Only then may the host send more than one slice.
+ ///
++/// `full_chroma` asks for 4:4:4 and is PyroWave-only: that decoder is Vulkan compute and takes
++/// either layout, while a MediaCodec handed HEVC 4:4:4 it has no profile for shows nothing.
++///
+ /// Android ARMv7 always asks for ChaCha because software AES limits these TV-class devices. Other
+ /// ABIs keep AES; their hardware acceleration makes the tradeoff target-specific.
+-fn video_caps(hdr: bool, ten_bit_sdr: bool, multi_slice: bool) -> u8 {
++fn video_caps(hdr: bool, ten_bit_sdr: bool, multi_slice: bool, full_chroma: bool) -> u8 {
+     use punktfunk_core::quic::{
+-        VIDEO_CAP_10BIT, VIDEO_CAP_CHACHA20, VIDEO_CAP_HDR, VIDEO_CAP_MULTI_SLICE,
++        VIDEO_CAP_10BIT, VIDEO_CAP_444, VIDEO_CAP_CHACHA20, VIDEO_CAP_HDR, VIDEO_CAP_MULTI_SLICE,
+     };
+     let mut caps = if cfg!(all(target_os = "android", target_arch = "arm")) {
+         VIDEO_CAP_CHACHA20
+@@ -246,6 +249,9 @@ fn video_caps(hdr: bool, ten_bit_sdr: bool, multi_slice: bool) -> u8 {
+     if multi_slice {
+         caps |= VIDEO_CAP_MULTI_SLICE;
+     }
++    if full_chroma {
++        caps |= VIDEO_CAP_444;
++    }
+     caps
+ }
+ 
+@@ -257,7 +263,7 @@ mod caps_tests {
+     };
+ 
+     fn automatic_caps() -> u8 {
+-        video_caps(false, false, false)
++        video_caps(false, false, false, false)
+     }
+ 
+     /// HDR carries 10-bit with it, 10-bit-SDR asks for the depth alone, and neither reaches for
+@@ -266,17 +272,17 @@ mod caps_tests {
+     fn ten_bit_is_asked_for_with_or_without_hdr() {
+         let automatic = automatic_caps();
+         assert_eq!(
+-            video_caps(true, false, false),
++            video_caps(true, false, false, false),
+             automatic | VIDEO_CAP_10BIT | VIDEO_CAP_HDR
+         );
+-        assert_eq!(video_caps(false, true, false), automatic | VIDEO_CAP_10BIT);
++        assert_eq!(video_caps(false, true, false, false), automatic | VIDEO_CAP_10BIT);
+         // HDR already implies the depth, so asking for both is the same request as HDR.
+         assert_eq!(
+-            video_caps(true, true, false),
++            video_caps(true, true, false, false),
+             automatic | VIDEO_CAP_10BIT | VIDEO_CAP_HDR
+         );
+         // …and 10-bit alone never implies PQ, which would be the mis-tone-mapped stream.
+-        assert_eq!(video_caps(false, true, false) & VIDEO_CAP_HDR, 0);
++        assert_eq!(video_caps(false, true, false, false) & VIDEO_CAP_HDR, 0);
+     }
+ 
+     /// Multi-slice is decoder truth and rides alongside, never gated by the colour asks.
+@@ -284,11 +290,11 @@ mod caps_tests {
+     fn multi_slice_is_independent_of_the_colour_bits() {
+         let automatic = automatic_caps();
+         assert_eq!(
+-            video_caps(false, false, true),
++            video_caps(false, false, true, false),
+             automatic | VIDEO_CAP_MULTI_SLICE
+         );
+         assert_eq!(
+-            video_caps(true, false, true),
++            video_caps(true, false, true, false),
+             automatic | VIDEO_CAP_10BIT | VIDEO_CAP_HDR | VIDEO_CAP_MULTI_SLICE
+         );
+     }
+@@ -304,6 +310,16 @@ mod caps_tests {
+     fn other_targets_keep_aes() {
+         assert_eq!(automatic_caps() & VIDEO_CAP_CHACHA20, 0);
+     }
++
++    #[test]
++    fn full_chroma_is_asked_for_only_when_told() {
++        use punktfunk_core::quic::VIDEO_CAP_444;
++        assert_eq!(video_caps(true, false, true, false) & VIDEO_CAP_444, 0);
++        assert_eq!(
++            video_caps(true, false, true, true),
++            video_caps(true, false, true, false) | VIDEO_CAP_444
++        );
++    }
+ }
+ 
+ /// What Kotlin hands `nativeConnect`, as `ConnectRequest.toJson()` writes it (kit/ConnectRequest.kt
+@@ -508,7 +524,15 @@ fn connect(req: ConnectRequest) -> jlong {
+         compositor: CompositorPref::from_u8(compositor_pref),
+         gamepad: GamepadPref::from_u8(gamepad_pref),
+         bitrate_kbps, // 0 = host default
+-        video_caps: video_caps(hdr_enabled, ten_bit_sdr, multi_slice_ok),
++        // PyroWave preferred and decodable here. The host still decides: its own 4:4:4 setting
++        // and its encoder probe both have to agree.
++        video_caps: video_caps(
++            hdr_enabled,
++            ten_bit_sdr,
++            multi_slice_ok,
++            preferred_codec == punktfunk_core::quic::CODEC_PYROWAVE
++                && video_codecs & punktfunk_core::quic::CODEC_PYROWAVE != 0,
++        ),
+         audio_channels,
+         // The audio format this session ASKS for (resolved above). A non-default pair is what
+         // makes core set `CLIENT_CAP_AUDIO_HIRES` in the `Hello` — capable AND the user turned it
