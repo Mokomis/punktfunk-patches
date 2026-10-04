@@ -17,9 +17,9 @@ Both build the Android client under the application id `io.unom.punktfunk.mokomi
 | Patchset | Base | Use with |
 |---|---|---|
 | [`patchsets/0.42.0-mokomis.1`](patchsets/0.42.0-mokomis.1) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. **Current.** |
-| [`patchsets/0.43.0-mokomis.1`](patchsets/0.43.0-mokomis.1) | v0.43.0, `d6920bf5dc7cb93673201b58bf9de61de3dcfbe5` | A 0.43.0 host. Against a 0.42.0 host, some controller buttons misbehaved. |
+| [`patchsets/0.43.0-mokomis.1`](patchsets/0.43.0-mokomis.1) | v0.43.0, `d6920bf5dc7cb93673201b58bf9de61de3dcfbe5` | A 0.43.0 host. It also streamed against the 0.42.0 host. |
 
-Match the client's release to the host's. Each folder's `VERIFICATION.md` has results and limitations; the pin change is a deliberate trade-off for a link known to carry the host cap.
+Matching the client's release to the host's is the safer choice. Controller buttons misbehaved in some sessions on both builds, for a reason that was not identified; see the notes. Each folder's `VERIFICATION.md` has results and limitations; the pin change is a deliberate trade-off for a link known to carry the host cap.
 
 On a clean checkout of the patchset's base commit, apply in this order, then build:
 
