@@ -1,0 +1,132 @@
+From 7c0a06886e94f63cf0249147f75b73ae46db35ce Mon Sep 17 00:00:00 2001
+From: Mokomis <24596443+Mokomis@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 18:29:14 -0500
+Subject: [PATCH] feat(android): show the Wi-Fi downlink in the stats overlay
+
+One more overlay line: the downlink rate the radio reports, and whether
+the connection has shown a 320 MHz downlink in the last minute. Android
+reports no downlink width, so 320 MHz is inferred from a rate no narrower
+channel reaches; a half minute of stream without one turns the line into
+a warning.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../kotlin/io/unom/punktfunk/StreamEffects.kt | 10 +++++-
+ .../kotlin/io/unom/punktfunk/WifiLinkLog.kt   | 35 +++++++++++++++++++
+ .../io/unom/punktfunk/WifiLinkLogTest.kt      | 21 +++++++++++
+ 3 files changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/StreamEffects.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/StreamEffects.kt
+index a01b5448d..108b0bd47 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/StreamEffects.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/StreamEffects.kt
+@@ -1,5 +1,7 @@
+ package io.unom.punktfunk
+ 
++import android.net.wifi.WifiManager
++import android.os.SystemClock
+ import android.widget.Toast
+ import androidx.compose.animation.core.LinearEasing
+ import androidx.compose.animation.core.animateFloatAsState
+@@ -134,18 +136,24 @@ internal fun rememberStatsLines(
+     LaunchedEffect(handle, statsOn) {
+         NativeBridge.nativeSetVideoStatsEnabled(handle, statsOn)
+         if (statsOn) {
++            val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
++            val wifiHud = WifiHud()
+             while (true) {
+                 delay(1000)
+                 // The panel's LIVE rate, re-read each poll: a governor that ignored the mode pin
+                 // leaves the panel below the stream, which the overlay names as a warning line.
+                 val display = runCatching { context.display }.getOrNull()
+-                lines.value = decodeHudLines(
++                val native = decodeHudLines(
+                     NativeBridge.nativeVideoStatsLines(
+                         handle, pollTier.ordinal, session.settings.advancedStats,
+                         display?.refreshRate ?: 0f, display?.mode?.refreshRate ?: 0f,
+                         session.presetName,
+                     ),
+                 )
++                // The radio's downlink under the stream's own load, the only time it means much.
++                val link = runCatching { wifi?.readLink() }.getOrNull()
++                val wifiLine = link?.let { wifiHud.line(it, SystemClock.elapsedRealtime()) }
++                lines.value = if (native.isEmpty() || wifiLine == null) native else native + wifiLine
+             }
+         } else {
+             lines.value = emptyList()
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
+index 3bc168069..a89bf7ada 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
+@@ -60,3 +60,38 @@ internal fun WifiManager.readLink(): WifiLink {
+         standard = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) info.wifiStandard else 0,
+     )
+ }
++
++/**
++ * The overlay's Wi-Fi line: the downlink rate the radio reports, and whether this connection has
++ * shown a 320 MHz downlink. Android reports no downlink width, so it is inferred from the rate —
++ * above [MAX_160_MBPS] only a 320 MHz channel can carry two streams. A lower rate proves nothing
++ * on its own (a 320 MHz link also runs slower codings), so the answer comes from the peak over
++ * [WINDOW_MS]: the width only shows under load, and a minute of stream is load enough.
++ */
++internal class WifiHud {
++    private val samples = ArrayDeque<Pair<Long, Int>>()
++
++    /** The line for [link] read at [nowMs], or null off Wi-Fi or without a downlink rate. */
++    fun line(link: WifiLink, nowMs: Long): HudLine? {
++        if (link.freqMhz <= 0 || link.rxMbps <= 0) {
++            samples.clear()
++            return null
++        }
++        samples.addLast(nowMs to link.rxMbps)
++        while (nowMs - samples.first().first > WINDOW_MS) samples.removeFirst()
++        val peak = samples.maxOf { it.second }
++        val watchedMs = nowMs - samples.first().first
++        return when {
++            peak > MAX_160_MBPS -> HudLine(2, "wi-fi ↓ ${link.rxMbps} Mb/s · 320 MHz")
++            watchedMs >= SETTLE_MS -> HudLine(3, "wi-fi ↓ ${link.rxMbps} Mb/s · no 320 MHz seen")
++            else -> HudLine(2, "wi-fi ↓ ${link.rxMbps} Mb/s")
++        }
++    }
++
++    companion object {
++        /** Two streams of 4096-QAM 5/6 at 160 MHz, rounded up: the most a narrower link reports. */
++        const val MAX_160_MBPS = 2_883
++        const val WINDOW_MS = 60_000L
++        const val SETTLE_MS = 30_000L
++    }
++}
+diff --git a/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt b/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
+index fe89207b2..e55a89d32 100644
+--- a/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
++++ b/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
+@@ -41,4 +41,25 @@ class WifiLinkLogTest {
+         assertEquals("periodic", log.reason(base, WifiLinkLog.PERIOD_MS))
+         assertNull(log.reason(base, WifiLinkLog.PERIOD_MS + 1_000))
+     }
++
++    @Test
++    fun hudNamesA320MhzDownlinkOnlyFromARateNothingNarrowerReaches() {
++        val hud = WifiHud()
++        val six = base.copy(freqMhz = 6375)
++        assertEquals("wi-fi ↓ 2402 Mb/s", hud.line(six.copy(rxMbps = 2402), 0)?.text)
++        assertEquals("wi-fi ↓ 3843 Mb/s · 320 MHz", hud.line(six.copy(rxMbps = 3843), 1_000)?.text)
++        // A slower coding on the same connection keeps the verdict while the peak is in the window.
++        assertEquals("wi-fi ↓ 1729 Mb/s · 320 MHz", hud.line(six.copy(rxMbps = 1729), 30_000)?.text)
++    }
++
++    @Test
++    fun hudWarnsOnceAHalfMinuteOfStreamShowedNo320Mhz() {
++        val hud = WifiHud()
++        val six = base.copy(freqMhz = 6375, rxMbps = 2161)
++        assertEquals(2, hud.line(six, 0)?.role)
++        val late = hud.line(six, 30_000)
++        assertEquals(3, late?.role)
++        assertEquals("wi-fi ↓ 2161 Mb/s · no 320 MHz seen", late?.text)
++        assertEquals(null, hud.line(six.copy(freqMhz = 0), 31_000))
++    }
+ }
+-- 
+2.55.0
+
