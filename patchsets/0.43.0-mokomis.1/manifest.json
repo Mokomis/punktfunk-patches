@@ -1,0 +1,24 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "base_tag": "v0.43.0",
+  "base_commit": "d6920bf5dc7cb93673201b58bf9de61de3dcfbe5",
+  "build_version": "0.43.0-mokomis.1",
+  "target": "aarch64-linux-android",
+  "application_id": "io.unom.punktfunk.mokomis",
+  "tested_host_version": "0.42.0+reconnect-fix.3",
+  "patches": [
+    {
+      "file": "android-pyrowave-hdr.patch",
+      "sha256": "729ece2dede96c587d8653433b2c77b8c87dd76c34de592ee140f371295c6ba1"
+    },
+    {
+      "file": "pyrowave-pin-timing-wall.patch",
+      "sha256": "e7a34ed7df70602c50cb408f7ae3f796412a924636953936656c9816a2f10f07"
+    },
+    {
+      "file": "android-custom-app-id.patch",
+      "sha256": "f98365b8f28a15f618490dc03a279d9f37fbb284a0d490b6ec620191d59f2669"
+    }
+  ],
+  "binary_sha256": "1d143b7ff459fc0b54a7b3f2ffd3e4c033a3439d9d60324bfaf9b60863b0b14d"
+}

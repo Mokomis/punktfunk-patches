@@ -1,14 +1,35 @@
-# Punktfunk reconnect patches
+# Punktfunk patches
 
-Private archive of tested Windows host fixes for reuse after official updates. Upstream: [unom/punktfunk](https://git.unom.io/unom/punktfunk). This repository does not publish or modify the upstream project.
+Private archive of tested Windows host and Android client fixes for reuse after official updates. Upstream: [unom/punktfunk](https://git.unom.io/unom/punktfunk). This repository does not publish or modify the upstream project.
 
-## Current patchset
+## Windows host patchset
 
 [`patchsets/0.42.0-reconnect-fix.3`](patchsets/0.42.0-reconnect-fix.3) targets **v0.42.0**, commit `8f046f239f3d6dcfc1fa0a25343be926a233a5a5`. The tested executable identifies itself as `0.42.0+reconnect-fix.3`.
 
 The patch makes the virtual-display keepalive worker interruptible, skips the video drain when a session is stopped, waits for complete session teardown instead of an unconditional 1.5-second handoff delay, and bounds silent Windows audio reads to 100 ms so the audio sender notices stop promptly. The existing 1.5-second maximum handoff grace is retained. No driver source is changed.
 
 The tested binary, patch and checksums are attached to the matching GitHub release. Keep the executable out of Git history.
+
+## Android client patchsets
+
+Both build the Android client under the application id `io.unom.punktfunk.mokomis` and carry the same changes: the PyroWave HDR10 presenter fix ported from 0.41.0, and a change that stops the connect-time ramp from lowering a PyroWave pin when its wall lost no packets. A third patch holds the build configuration.
+
+| Patchset | Base | Use with |
+|---|---|---|
+| [`patchsets/0.42.0-mokomis.1`](patchsets/0.42.0-mokomis.1) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. **Current.** |
+| [`patchsets/0.43.0-mokomis.1`](patchsets/0.43.0-mokomis.1) | v0.43.0, `d6920bf5dc7cb93673201b58bf9de61de3dcfbe5` | A 0.43.0 host. It also streamed against the 0.42.0 host. |
+
+Matching the client's release to the host's is the safer choice. Controller buttons misbehaved in some sessions on both builds, for a reason that was not identified; see the notes. Each folder's `VERIFICATION.md` has results and limitations; the pin change is a deliberate trade-off for a link known to carry the host cap.
+
+On a clean checkout of the patchset's base commit, apply in this order, then build:
+
+```sh
+P=/path/to/punktfunk-patches/patchsets/0.42.0-mokomis.1
+git apply "$P/android-pyrowave-hdr.patch" "$P/pyrowave-pin-timing-wall.patch" "$P/android-custom-app-id.patch"
+cd clients/android && VERSION_NAME=0.42.0-mokomis.1 ./gradlew :app:assembleDebug
+```
+
+`scripts/apply.py` covers the host patchset only. A separately signed client has its own pairing identity: pair it once with the host. Builds installed over the same application id keep it.
 
 ## Apply to the tested release
 

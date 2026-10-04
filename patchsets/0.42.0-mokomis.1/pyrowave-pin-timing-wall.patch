@@ -1,0 +1,125 @@
+diff --git a/crates/punktfunk-core/src/abr/mod.rs b/crates/punktfunk-core/src/abr/mod.rs
+index 0319b5730..fd4521acc 100644
+--- a/crates/punktfunk-core/src/abr/mod.rs
++++ b/crates/punktfunk-core/src/abr/mod.rs
+@@ -468,15 +468,26 @@ impl Driver {
+     /// there. Nothing measured at all licenses nothing.
+     ///
+     /// A pinned session reads the verdict instead: the pin drops to
+-    /// `min(pin, 0.7 × delivered)` on a wall, and only on a wall — a floor
+-    /// under the link, an unreadable step, and a ramp cut short are not
+-    /// walls, so none of them moves the pin. The one ask goes out before
+-    /// the first frame; a ramp that never ran produces no ask at all.
++    /// `min(pin, 0.7 × delivered)` on a wall that lost packets, and only
++    /// then — a floor under the link, an unreadable step, a ramp cut short
++    /// and a wall read from arrival timing alone do not move the pin. The
++    /// one ask goes out before the first frame; a ramp that never ran
++    /// produces no ask at all.
+     fn on_ramped(&mut self, ramped: probe::Ramped, now: Instant) -> Option<u32> {
+         if let Some(pin) = self.pin_kbps {
+             let probe::Ramped::Wall { delivered_kbps } = ramped else {
+                 return None;
+             };
++            // 25 ms of late packets is an idle Wi-Fi link's first answer, and
++            // a pin has no later measurement to raise it again.
++            if self.probe.ramp_wall_by_timing() {
++                tracing::info!(
++                    pin_kbps = pin,
++                    delivered_kbps,
++                    "adaptive bitrate: PyroWave pin kept, the ramp's wall lost no packets"
++                );
++                return None;
++            }
+             let fit = probe::wall_ceiling_kbps(delivered_kbps).min(pin);
+             if fit > 0 && fit < pin {
+                 tracing::info!(
+diff --git a/crates/punktfunk-core/src/abr/probe.rs b/crates/punktfunk-core/src/abr/probe.rs
+index 01db1b214..ee9a36391 100644
+--- a/crates/punktfunk-core/src/abr/probe.rs
++++ b/crates/punktfunk-core/src/abr/probe.rs
+@@ -255,6 +255,9 @@ struct Ramp {
+     /// Stopped before it had asked everything it meant to: video arrived, or
+     /// a step went unanswered. Capacity above `proven_kbps` is unmeasured.
+     cut_short: bool,
++    /// The wall rests on arrival timing alone: the link delivered the packets,
++    /// late. A radio still stepping its rate up reads the same way.
++    wall_by_timing: bool,
+     outcome: Option<Ramped>,
+     /// Every settled step, for a client writing the measurement down. Bounded
+     /// by the ramp itself: it doubles from 5 Mbps and stops at the stream's
+@@ -327,6 +330,7 @@ impl Ramp {
+             confirming: None,
+             re_ask_spent: false,
+             cut_short: false,
++            wall_by_timing: false,
+             outcome: None,
+             history: Vec::new(),
+         }
+@@ -409,6 +413,7 @@ impl Ramp {
+         if let Some(first) = self.confirming.take() {
+             // Refused twice at the same rate: the link carried at best the
+             // better of the two readings.
++            self.wall_by_timing = timing_only;
+             self.stop(Ramped::Wall {
+                 delivered_kbps: delivered_kbps.max(first),
+             });
+@@ -424,6 +429,7 @@ impl Ramp {
+             // `next_kbps` still holds the rate that was just asked.
+             return Some(self.begin(now));
+         }
++        self.wall_by_timing = timing_only;
+         self.stop(Ramped::Wall { delivered_kbps });
+         None
+     }
+@@ -869,6 +875,11 @@ impl CapacityProbe {
+         self.ramp.as_ref().is_some_and(|r| r.cut_short)
+     }
+ 
++    /// The ramp's wall lost no packets: it is a verdict on arrival timing.
++    pub(crate) fn ramp_wall_by_timing(&self) -> bool {
++        self.ramp.as_ref().is_some_and(|r| r.wall_by_timing)
++    }
++
+     /// This session measures with a ramp, so it never bursts beside video.
+     pub(crate) fn has_ramp(&self) -> bool {
+         self.ramp.is_some()
+@@ -1331,6 +1342,39 @@ mod tests {
+         }
+     }
+ 
++    /// A wall keeps its cause: every packet arrived, late, or packets went
++    /// missing. A pinned session fits its pin to the second only.
++    #[test]
++    fn a_wall_remembers_whether_it_lost_packets() {
++        for (delivered, by_timing) in [(24u64, true), (12, false)] {
++            let mut rig = Rig::new(46_656, None);
++            let mut step = rig.p.poll(rig.now, 0, 0);
++            while let Some((target, duration_ms)) = step {
++                let interval_ms = duration_ms * 4;
++                let r = ProbeReport {
++                    delivered_bytes: delivered * 1_448,
++                    delivered_packets: delivered,
++                    window_ms: interval_ms,
++                    host_duration_ms: duration_ms,
++                    client_interval_ms: interval_ms,
++                    client_interval_us: interval_ms * 1_000,
++                    host_bytes_sent: u64::from(target) * u64::from(duration_ms) / 8,
++                    wire_packets_sent: 24,
++                    send_dropped: 0,
++                };
++                let at = rig.at(1);
++                rig.p.on_result(r, at);
++                let at = rig.at(RAMP_DRAIN_MS + 1);
++                step = rig.p.poll(at, 0, 0);
++            }
++            assert!(
++                matches!(rig.p.take_ramped(rig.now), Some(Ramped::Wall { .. })),
++                "{delivered} delivered"
++            );
++            assert_eq!(rig.p.ramp_wall_by_timing(), by_timing, "{delivered} delivered");
++        }
++    }
++
+     /// A short step's implied rate is noise: the rig measured the same 24
+     /// packets arriving over 6 ms and over 15 ms, 2.5× apart. Whatever the
+     /// arithmetic says, a step cannot have proved more than it offered — and

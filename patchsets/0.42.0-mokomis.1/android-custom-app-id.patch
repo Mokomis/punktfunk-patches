@@ -1,0 +1,57 @@
+diff --git a/clients/android/app/build.gradle.kts b/clients/android/app/build.gradle.kts
+index 2fc6d23ec..c82ba2b5f 100644
+--- a/clients/android/app/build.gradle.kts
++++ b/clients/android/app/build.gradle.kts
+@@ -24,7 +24,7 @@ android {
+             envFile.inputStream().use { props.load(it) }
+         }
+ 
+-        applicationId = "io.unom.punktfunk"
++        applicationId = "io.unom.punktfunk.mokomis"
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+         // Android 9. Reaches older Android TV boxes (e.g. Amlogic streamers still on Android 9–11);
+         // the handful of API 31+ APIs we use are runtime-gated (Material You → brand palette, rumble
+@@ -57,7 +57,7 @@ android {
+         // x86_64 stays for the emulator. Google keeps delivering to 32-bit TV devices (see the Aug
+         // 2025 "64-bit app compatibility for Google TV and Android TV" post) — the 64-bit lib is the
+         // required half; the 32-bit lib is what actually reaches the boxes people report failing.
+-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
++        ndk { abiFilters += listOf("arm64-v8a") }
+     }
+ 
+     signingConfigs {
+diff --git a/clients/android/app/src/main/AndroidManifest.xml b/clients/android/app/src/main/AndroidManifest.xml
+index 71a85ca6d..aceb53988 100644
+--- a/clients/android/app/src/main/AndroidManifest.xml
++++ b/clients/android/app/src/main/AndroidManifest.xml
+@@ -75,7 +75,7 @@
+         android:banner="@drawable/tv_banner"
+         android:icon="@mipmap/ic_launcher"
+         android:roundIcon="@mipmap/ic_launcher_round"
+-        android:label="@string/app_name"
++        android:label="Punktfunk Custom"
+         android:supportsRtl="true"
+         android:theme="@style/Theme.PunktfunkAndroid">
+ 
+diff --git a/clients/android/kit/build.gradle.kts b/clients/android/kit/build.gradle.kts
+index 7810e6a85..1b821cfd2 100644
+--- a/clients/android/kit/build.gradle.kts
++++ b/clients/android/kit/build.gradle.kts
+@@ -20,7 +20,7 @@ android {
+         minSdk = 28 // Android 9 — reaches older TV boxes; API 31+ features are runtime-gated.
+         // Keep in lockstep with :app — 32-bit armeabi-v7a for the many 32-bit Google TV / Android TV
+         // boxes, 64-bit arm64-v8a for phones + modern TV, x86_64 for the emulator.
+-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
++        ndk { abiFilters += listOf("arm64-v8a") }
+     }
+     compileOptions {
+         sourceCompatibility = JavaVersion.VERSION_21
+@@ -228,7 +228,7 @@ fun registerCargoNdk(taskName: String, release: Boolean) =
+         // find their subtools.
+         val cmd = mutableListOf(
+             "$cargoBin/cargo", "ndk",
+-            "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64",
++            "-t", "arm64-v8a",
+             // Link against the minSdk-28 sysroot (libaaudio, API 26, is present). NOTE: this does
+             // NOT reject an accidental >28 hard import — a cdylib link permits undefined symbols,
+             // which then fail at System.loadLibrary on every device below the symbol's API level
