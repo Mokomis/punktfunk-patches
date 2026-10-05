@@ -10,6 +10,10 @@ The patch makes the virtual-display keepalive worker interruptible, skips the vi
 
 The tested binary, patch and checksums are attached to the matching GitHub release. Keep the executable out of Git history.
 
+## Backlog
+
+Ideas that are measured but not built, for the host and the client, are in [`BACKLOG.md`](BACKLOG.md).
+
 ## Android client patchsets
 
 All build the Android client under the application id `io.unom.punktfunk.mokomis` and carry the same two changes: the PyroWave HDR10 presenter fix ported from 0.41.0, and a change that stops the connect-time ramp from lowering a PyroWave pin when its wall lost no packets. A further patch holds the build configuration. `0.42.0-mokomis.2` adds one more, which lets a PyroWave stream run at 4:4:4 when the host's **Full color 4:4:4** setting is on. That works, but at 2520×1680 and 120 Hz the tablet throttled its GPU after about 13 minutes; see its notes.
