@@ -1,0 +1,40 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "base_tag": "v0.42.0",
+  "base_commit": "8f046f239f3d6dcfc1fa0a25343be926a233a5a5",
+  "build_version": "0.42.0-mokomis.4",
+  "target": "aarch64-linux-android",
+  "application_id": "io.unom.punktfunk.mokomis",
+  "tested_host_version": "0.42.0+reconnect-fix.3",
+  "patches": [
+    {
+      "file": "android-pyrowave-hdr.patch",
+      "sha256": "729ece2dede96c587d8653433b2c77b8c87dd76c34de592ee140f371295c6ba1"
+    },
+    {
+      "file": "pyrowave-pin-timing-wall.patch",
+      "sha256": "8d48e8708751d10c050f8ccf8622003fda6114fe2e016b43cfcfd495fde6ee06"
+    },
+    {
+      "file": "android-pyrowave-444.patch",
+      "sha256": "6c6df074a1290a95d3aca0f38abbeeca3f52ed946edf125d221487e28e6eca18"
+    },
+    {
+      "file": "android-display-hdr-volume.patch",
+      "sha256": "1751717282381f861988bb977a85d8e3c481a12b4c2e4b68ab559820a04f3001"
+    },
+    {
+      "file": "android-wifi-downlink-hud.patch",
+      "sha256": "341b01c5a6ff690b35408074808422aea7aad649af975304ff80735d4dca78ea"
+    },
+    {
+      "file": "android-wifi-downlink-hud-load.patch",
+      "sha256": "271f835c7211bac7ee959dbcc7319c54fad154afc17e1e928a16b3b042925d6d"
+    },
+    {
+      "file": "android-custom-app-id.patch",
+      "sha256": "f98365b8f28a15f618490dc03a279d9f37fbb284a0d490b6ec620191d59f2669"
+    }
+  ],
+  "binary_sha256": "edda57377d2b95f306b15afc302e460ebbf2232a55f805f1b4ca61e6885bfddf"
+}
