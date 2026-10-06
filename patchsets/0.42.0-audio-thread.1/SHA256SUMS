@@ -1,0 +1,2 @@
+c6d82c6eb7b76c11539208fe96ebe47ee02de7716ab9ba49daba43670661c4fb  01-audio-egress-stall-stats.patch
+9a3b18022d52512813aee6bddd1fd2a24b46cb5cf6e7cda34854bd6388211e39  02-quic-own-runtime.patch

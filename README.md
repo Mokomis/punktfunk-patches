@@ -10,6 +10,8 @@ The patch makes the virtual-display keepalive worker interruptible, skips the vi
 
 The tested binary, patch and checksums are attached to the matching GitHub release. Keep the executable out of Git history.
 
+[`patchsets/0.42.0-audio-thread.1`](patchsets/0.42.0-audio-thread.1) applies on top of it: two patches for the audio stalls described in [`BACKLOG.md`](BACKLOG.md), one that reports them in the host log and one that runs the QUIC endpoint on its own thread. **Compiled and unit-tested only; not installed and not tested against the symptom.** See its [verification notes](patchsets/0.42.0-audio-thread.1/VERIFICATION.md).
+
 ## Backlog
 
 Ideas that are measured but not built, for the host and the client, are in [`BACKLOG.md`](BACKLOG.md).
