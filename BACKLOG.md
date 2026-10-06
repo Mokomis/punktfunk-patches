@@ -4,6 +4,7 @@ Ideas not yet built, for the Windows PunktFunk host and for the Android client. 
 
 - [Host](#host)
 - [Client](#client)
+- [Background: Wi-Fi 7 width switching on the tablet](#background-wi-fi-7-width-switching-on-the-tablet)
 
 Evidence paths such as `logs/...` refer to the local tuning folder the measurements were taken in; those logs are not in this repository.
 
@@ -47,6 +48,17 @@ From `patchsets/0.42.0-reconnect-fix.3`. Upstream 0.43.0 replaced the fixed 1.5 
 
 Check whether 0.43.x still needs each one before porting.
 
+## 3. Stream goes silent on a still picture (added October 5, 2026)
+
+**Why it matters.** With PyroWave the host sends almost nothing while the picture is still (a menu, a loading screen, the desktop: 0 to 60 Mb/s measured). On the OPPO tablet that lets the Wi-Fi link drop to 80 MHz, and the next movement asks for 1.1 Gb/s on a link that carries about half of that until it widens again. See the background section below.
+
+**Possible directions.**
+
+- Keep the link loaded during a still picture, for example by continuing to send frames at the session's rate for a short hold time after motion stops. A trickle is not enough: the tablet stayed at 80 MHz at every rate up to 100 Mb/s.
+- Ramp the bitrate over a few hundred milliseconds when motion resumes, so the first frames fit the narrow channel.
+
+**Not established.** Whether the resume actually costs frames. The step from 80 to 320 MHz takes about 8 ms when it works and up to 150 ms when the request times out (39 of 136 did), but dropped frames were not lined up against those moments.
+
 # Client
 
 None of these is specific to the OPPO tablet; they are in the client's shared audio code and would behave the same on any Android device. The OPPO-specific part of the audio delay (ColorOS keeping apps off the low-latency output paths) is handled outside the client and documented in the public `opd2515-low-latency-audio` repository.
@@ -72,4 +84,56 @@ None of these is specific to the OPPO tablet; they are in the client's shared au
 **Not established.** Whether any of these would be audible in practice. The swell costs about two minutes of extra delay per connect and then clears by itself; the larger audio problem is the host-side stall above.
 
 **Evidence files.** `logs/audio_capture_full.log` (connect and decay), `logs/audio_fastpath_test.log`, `logs/audio_gap_full_1.log`.
+
+## 2. Connect-time speed test reads the narrow channel (added October 5, 2026)
+
+**Symptom.** On every connect the bring-up ramp reports a wall at about 500 to 545 Mb/s with no packets lost, and an unpatched client lowers a PyroWave pin to roughly 350 Mb/s. `pyrowave-pin-timing-wall.patch` works around it by keeping the pin when the wall lost nothing.
+
+**Likely cause (inference, not tested directly).** The ramp sends 25 ms bursts. The tablet's Wi-Fi firmware reconsiders its channel width every 100 ms and sits at 80 MHz when idle, so the ramp finishes before the link has widened and measures the 80 MHz channel. About 520 Mb/s is what that channel carries. A sustained 1.1 Gb/s stream on the same connection runs at 320 MHz with no loss.
+
+**Possible directions.**
+
+- Precede the ramp with a few hundred milliseconds of traffic, or make the last ramp steps long enough to span several 100 ms decisions.
+- Treat a timing-only wall as provisional and re-test once the stream has been running for a second.
+
+**Where it is in the code.** `crates/punktfunk-core/src/abr/probe.rs` (ramp), `crates/punktfunk-core/src/abr/mod.rs` (`on_ramped`).
+
+# Background: Wi-Fi 7 width switching on the tablet
+
+Not a patch idea by itself; this is the behaviour several items above work around. Measured October 5, 2026 on the OPPO Pad Mini (Qualcomm WCN7750 Wi-Fi) on a TP-Link Deco 6 GHz network, with the firmware log (`wifidriverlog_on`) and the firmware's message catalogue (`Data.msc`).
+
+**What happens.** The tablet's connection to the 6 GHz network is a Wi-Fi 7 multi-link (MLO) association, with one link. The firmware's multi-link power-save module (`wlan_powersave_mlo_sta.c`) decides the receive width every 100 ms from the tablet's own share of channel airtime, and asks the router to follow with an operating-mode (OMI) frame. The router complies.
+
+| Traffic to the tablet | Width chosen |
+|---|---|
+| 0 to 100 Mb/s | 80 MHz |
+| 200 Mb/s | 80 MHz, asking for more about a fifth of the time |
+| 400 Mb/s | flips between 80 and 320 MHz about twice a second |
+| 1,100 Mb/s (PyroWave stream) | 320 MHz, steady |
+
+**Consequences.**
+
+- A bitrate between roughly 300 and 700 Mb/s is the worst place to be: the link changes width constantly. A 60 fps cap put PyroWave at 564 Mb/s, inside that range.
+- Lower is not automatically safer. Either stay high enough to hold 320 MHz or go well below the range.
+- An idle or low-rate reading of 80 MHz says nothing about the connection's quality.
+
+**It is not specific to PunktFunk or to OPPO's software.** Plain UDP from another machine produced the same flipping. It is the Wi-Fi firmware's behaviour on a multi-link association.
+
+**Tried, without finding an off switch.**
+
+| Tried | Result |
+|---|---|
+| `gEnableBmps=0`, `gEnableImps=0` | Both antennas stay on at idle; width still switches |
+| `gDtim1ChRxEnable=0`, `enable_dynamic_nss_chain_config=0`, `gRuntimePM=0` | No visible effect |
+| Low-latency profile | Already at the firmware's highest mode during a stream; the module ignores it |
+| `mlo_support_link_band=0x33` (no multi-link on 6 GHz) | The Deco rejects the association; reverted |
+| `gDot11Mode=10` (Wi-Fi 6E mode) | The tablet no longer sees 6 GHz networks; reverted |
+| Deco app, MLO Network off | Removes the separate `_MLO` network only; the 6 GHz network is still multi-link |
+| Steady keep-alive traffic | Needs hundreds of Mb/s |
+
+`dynamic_bw_switch` is a transmit-side setting and not this behaviour. The firmware catalogue shows no enable or disable message for the width decision.
+
+**Also found the same evening.** The tablet sometimes joined the far mesh node (4 of about 21 connections) and a running stream kept it there. Fixed on the router: Deco app, the tablet's client entry, Specified Connection set to the near node, Mesh Technology off for that entry; 22 of 22 joins correct afterwards.
+
+**Still unexplained.** On October 4 six connections in a row stayed at 160 MHz under a 1.1 Gb/s stream, on the right node at a strong signal, with a single link. It did not recur in 17 connections on October 5. The module also weighs other networks' airtime, and large file transfers were running through the same mesh that day; that is a possible cause, not a confirmed one.
 
