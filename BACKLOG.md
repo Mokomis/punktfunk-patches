@@ -1,9 +1,10 @@
 # Potential patches
 
-Ideas not yet built, for the Windows PunktFunk host and for the Android client. The host on the PC today is `0.42.0+reconnect-fix.3`; the client on the tablet is `0.42.0-mokomis.4`.
+Ideas not yet built, for the Windows PunktFunk host and for the Android client. The host on the PC today is `0.42.0+reconnect-fix.3`; the client on the tablet is `0.42.0-mokomis.7`.
 
 - [Host](#host)
 - [Client](#client)
+- [Tests waiting to be run](#tests-waiting-to-be-run)
 - [Background: Wi-Fi 7 width switching on the tablet](#background-wi-fi-7-width-switching-on-the-tablet)
 
 Evidence paths such as `logs/...` refer to the local tuning folder the measurements were taken in; those logs are not in this repository.
@@ -97,6 +98,70 @@ None of these is specific to the OPPO tablet; they are in the client's shared au
 - Treat a timing-only wall as provisional and re-test once the stream has been running for a second.
 
 **Where it is in the code.** `crates/punktfunk-core/src/abr/probe.rs` (ramp), `crates/punktfunk-core/src/abr/mod.rs` (`on_ramped`).
+
+## 3. Tested and ruled out: 4:4:4 on the fragment decode path (October 6, 2026)
+
+Not a patch. Kept here so it is not retried without a reason.
+
+**Result.** PyroWave 4:4:4 at 2520×1680, 120 Hz, 10-bit HDR runs correctly on the fragment path and holds 120 fps, but the tablet runs about 30 °C hotter at the GPU than at 4:2:0 and was still climbing when the user stopped the test after about 12 minutes. The user ruled it out on heat.
+
+| Measure | 4:2:0 | 4:4:4 |
+|---|---|---|
+| Inverse wavelet, GPU time per frame | 1.83 ms | 3.1 ms |
+| Unpacking coefficients | 0.75 ms | 1.3 ms |
+| Colour-conversion draw | 0.64 ms | 0.6 ms |
+| GPU busy at the 1025 MHz floor | 37% | 55–62% |
+| GPU temperature | about 53 °C after a few minutes | 59 °C at 1 min, 74 °C at 7 min, 80–82 °C at 10–12 min |
+| Tablet shell | not recorded | 42.5–43.3 °C (OPPO's target was 41.4 °C) |
+| Android thermal status | not recorded | 2 at 5 min, 3 at 12 min |
+
+The GPU clock was never cut in those 12 minutes and its thermal level stayed at 0, so this run did not reach the throttle that stopped the compute-path run at about 13 minutes. OPPO's thermal controller moved to its level 9 at about 7 minutes without capping the CPU or GPU.
+
+**One event during the run, not explained.** About 4.5 minutes in the client dropped 34 frames, and from two seconds later the downlink read one spatial stream (1,921 Mb/s at 320 MHz, where it had been 3,843–4,322 Mb/s on two) with the signal about 10 dB weaker; it stayed that way for the rest of the run. The user had not moved. A 15-second firmware capture afterwards showed both receive antennas on, no heat mitigation, the Wi-Fi chip's sensors at 59–63 °C and the kernel's Wi-Fi limiters at 0. Whether the tablet asked for one stream or the router chose it was not seen. Whether it is tied to heat is not known: there is no reading of the same sensors from a 4:2:0 run.
+
+**Not tried.** 4:4:4 at 90 Hz.
+
+**Evidence files.** `logs/444_frag_monitor.txt`, `logs/444_frag_steps.txt`, `logs/pyro_steps_fragment.txt`, `logs/wifi320/fw_444_onestream.txt`, `logs/shots/444_frag_1.png`, `444_frag_2.png`.
+
+## 4. Parked: optimising the PyroWave decode shaders (October 6, 2026)
+
+Considered and set aside. Kept here so it is not investigated again from nothing.
+
+**What was measured.** GPU time per frame on the fragment path (2520×1680, 120 Hz, 10-bit 4:2:0, GPU floor 1025 MHz), with the timing option in `0.42.0-mokomis.6`: inverse wavelet 1.83 ms, unpacking coefficients (dequant) 0.75 ms, colour-conversion draw 0.64 ms. Total 3.2 ms of an 8.3 ms frame, 37% GPU busy.
+
+**Why it is parked.**
+
+- Tuning the inverse-wavelet shader: a 20% gain would be a good result and saves about 0.4 ms, 4 to 5 points of GPU busy. The switch from compute to the fragment path gave 13.
+- Reworking the unpacking step: it is a compute shader on both paths, and on purpose. It decodes variable-length data by having 128 threads per 32×32 block share running totals (subgroup operations), which a fragment shader cannot do; a fragment version would need a different scheme and could be slower. The realistic change is fewer, larger dispatches (it runs about 40 small ones per frame). Halving the step would save about 0.4 ms. Either change touches codec internals that must stay bit-correct.
+- The colour-conversion draw touches every output pixel once and has little to remove.
+- None of this makes 4:4:4 viable: that needs the codec steps about 40% faster (see item 3).
+
+**What would reopen it.** Decode becoming tight at a lower GPU clock floor, or a per-dispatch measurement showing most of the unpacking time is fixed overhead in the small dispatches.
+
+**A lead from elsewhere.** The developer of the PyroWave port for Moonlight (`joemossjr16/pyrowave-streaming`, notes dated September 24, 2026) measured a similar Adreno chip: the fragment path about 50% faster than compute, a lower-precision wavelet mode worth about 8%, and an untried shader change (two outputs per fragment invocation) estimated at about 1 ms. Their figures, not checked here.
+
+**Next related test, not yet run.** Lower the clock floor, or return to the stock clock, with the fragment path. The 1025 MHz floor was chosen on the slower compute path and costs about 10 °C; at 37% busy a lower clock may decode as smoothly.
+
+## 5. Solved in `0.42.0-mokomis.7`: judder on hardware-decoded streams (October 8, 2026)
+
+HEVC at 144 Hz with a 70–100 fps game juddered heavily on the client's default display path (ASurfaceControl) and was smooth on the SurfaceView path; the default also held each frame about 10 ms longer before the panel. `0.42.0-mokomis.7` adds a **Frame presentation** setting to choose the path; the tablet is set to **Direct, on arrival**. Measurements and limits are in that patchset's notes.
+
+**Not established.** Why the default path misbehaves on this tablet, and whether it also does at a source rate that matches the stream.
+
+# Tests waiting to be run
+
+None of these needs new code. Each is one session with the tablet on USB.
+
+| Test | What it answers | Setup |
+|---|---|---|
+| Frame presentation from the app | That the stored setting, not only the debug properties, gives the smooth result | HEVC, any game below the stream rate; check the log for `present backend = SurfaceView` and `presenter = arrival` |
+| Frame presentation at a matched rate | Whether Direct or on-arrival is any worse when the game holds the stream's rate | A steady 120 fps game on a 120 Hz stream, each of the three choices |
+| Lower GPU clock floor with the fragment path | Whether PyroWave still decodes smoothly below 1025 MHz, or at stock, and how much cooler it runs | PyroWave 4:2:0, timing option on (`debug.punktfunk.pyro_stats=1`), floor at stock, then steps up. One data point already: at stock, decode was 8.8 ms at 56% busy and looked smooth |
+| HEVC and AV1 against PyroWave | Picture quality by eye in fast foliage, delay, heat | Same scene, each codec at its highest bitrate. Note the HEVC low-latency decoder's 70 Mb/s ceiling |
+| Battery drain per codec | Real watts for PyroWave and HEVC; only estimates exist | Tablet unplugged, wireless debugging, charge counter over ten minutes each |
+| Host pipeline under load | Whether capture or encode is held up on the PC in a heavy scene | Host console, Performance, record a session |
+| Frame generation capture | Whether generated frames reach the tablet | A game with frame generation on, Steam's performance overlay visible in the stream, compared with the client's fps. The host's virtual display runs at the stream's refresh rate, so output above that rate cannot all arrive |
+| One-stream Wi-Fi drop | Whether the drop to one spatial stream seen during the 4:4:4 run is tied to heat | Firmware log running through a hot session and a cool-down |
 
 # Background: Wi-Fi 7 width switching on the tablet
 

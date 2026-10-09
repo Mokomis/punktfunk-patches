@@ -20,7 +20,10 @@ All build the Android client under the application id `io.unom.punktfunk.mokomis
 
 | Patchset | Base | Use with |
 |---|---|---|
-| [`patchsets/0.42.0-mokomis.4`](patchsets/0.42.0-mokomis.4) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. **Current.** Fixes a false Wi-Fi warning in the stats overlay on a quiet stream. |
+| [`patchsets/0.42.0-mokomis.7`](patchsets/0.42.0-mokomis.7) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. **Current.** Adds a Frame presentation setting that removes heavy judder on hardware-decoded (HEVC/AV1) streams on this tablet. |
+| [`patchsets/0.42.0-mokomis.6`](patchsets/0.42.0-mokomis.6) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds an off-by-default GPU step-timing readout and corrects the overlay's Wi-Fi warning wording. |
+| [`patchsets/0.42.0-mokomis.5`](patchsets/0.42.0-mokomis.5) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Runs the PyroWave inverse wavelet on the fragment path where the codec prefers it; about a quarter less GPU load on the Adreno 829 in one measurement. |
+| [`patchsets/0.42.0-mokomis.4`](patchsets/0.42.0-mokomis.4) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Fixes a false Wi-Fi warning in the stats overlay on a quiet stream. |
 | [`patchsets/0.42.0-mokomis.3`](patchsets/0.42.0-mokomis.3) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds the panel's HDR range in the handshake and a Wi-Fi downlink line in the stats overlay. |
 | [`patchsets/0.42.0-mokomis.2`](patchsets/0.42.0-mokomis.2) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds PyroWave 4:4:4. |
 | [`patchsets/0.42.0-mokomis.1`](patchsets/0.42.0-mokomis.1) | v0.42.0, same commit | A 0.42.0 host, without 4:4:4. |
@@ -31,12 +34,14 @@ Matching the client's release to the host's is the safer choice. Controller butt
 On a clean checkout of the patchset's base commit, apply in this order, then build:
 
 ```sh
-P=/path/to/punktfunk-patches/patchsets/0.42.0-mokomis.4
+P=/path/to/punktfunk-patches/patchsets/0.42.0-mokomis.7
 git apply "$P/android-pyrowave-hdr.patch" "$P/pyrowave-pin-timing-wall.patch" \
   "$P/android-pyrowave-444.patch" "$P/android-display-hdr-volume.patch" \
   "$P/android-wifi-downlink-hud.patch" "$P/android-wifi-downlink-hud-load.patch" \
+  "$P/pyrowave-fragment-idwt.patch" "$P/pyrowave-gpu-step-timing.patch" \
+  "$P/android-wifi-hud-reduced-wording.patch" "$P/android-frame-presentation.patch" \
   "$P/android-custom-app-id.patch"
-cd clients/android && VERSION_NAME=0.42.0-mokomis.4 ./gradlew :app:assembleDebug
+cd clients/android && VERSION_NAME=0.42.0-mokomis.7 ./gradlew :app:assembleDebug
 ```
 
 `scripts/apply.py` covers the host patchset only. A separately signed client has its own pairing identity: pair it once with the host. Builds installed over the same application id keep it.

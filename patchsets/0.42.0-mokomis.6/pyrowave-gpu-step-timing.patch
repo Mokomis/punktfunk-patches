@@ -1,0 +1,256 @@
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index 78eddfc5a..535a28fc5 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -78,6 +78,10 @@ mod imp {
+                 _ => None,
+             },
+         );
++        // `adb shell setprop debug.punktfunk.pyro_stats 1` logs the codec's GPU step timings.
++        pf_client_core::video_pyrowave::set_gpu_stats(
++            crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1"),
++        );
+         PyroWaveDecoder::new(
+             &dev.vkd,
+             mode.width,
+diff --git a/clients/android/native/src/pyro/present.rs b/clients/android/native/src/pyro/present.rs
+index abdad6e2e..d1659dff6 100644
+--- a/clients/android/native/src/pyro/present.rs
++++ b/clients/android/native/src/pyro/present.rs
+@@ -74,9 +74,63 @@ pub(super) struct Present<'d> {
+     fences: Vec<vk::Fence>,
+     swap: SwapRes,
+     frame: usize,
++    /// GPU time of the draw pass, when `debug.punktfunk.pyro_stats` is 1.
++    draw_timer: Option<DrawTimer>,
+     _dev: PhantomData<&'d super::device::PyroDevice>,
+ }
+ 
++/// Draws between two log lines of [`DrawTimer`]. Five seconds at 120 Hz.
++const DRAW_STATS_EVERY: u32 = 600;
++
++/// Timestamps around the colour-conversion draw: two queries per frame slot, read back when
++/// the slot's fence has been waited on.
++struct DrawTimer {
++    pool: vk::QueryPool,
++    /// Nanoseconds per timestamp tick.
++    period_ns: f64,
++    /// The slot's queries were written by a submit and not yet read.
++    written: [bool; FRAMES],
++    sum_ns: f64,
++    max_ns: f64,
++    n: u32,
++}
++
++impl DrawTimer {
++    /// Read `frame`'s pair, whose submit has completed, and log every [`DRAW_STATS_EVERY`].
++    fn collect(&mut self, device: &ash::Device, frame: usize) {
++        if !std::mem::take(&mut self.written[frame]) {
++            return;
++        }
++        let mut ticks = [0u64; 2];
++        // SAFETY: the pool is owned here; the two queries were written by a submit whose
++        // fence the caller has waited on.
++        let read = unsafe {
++            device.get_query_pool_results(
++                self.pool,
++                2 * frame as u32,
++                &mut ticks,
++                vk::QueryResultFlags::TYPE_64,
++            )
++        };
++        if read.is_err() {
++            return;
++        }
++        let ns = ticks[1].saturating_sub(ticks[0]) as f64 * self.period_ns;
++        self.sum_ns += ns;
++        self.max_ns = self.max_ns.max(ns);
++        self.n += 1;
++        if self.n >= DRAW_STATS_EVERY {
++            log::info!(
++                "pyro: present draw GPU time avg={:.3} ms max={:.3} ms over {} frames",
++                self.sum_ns / f64::from(self.n) / 1e6,
++                self.max_ns / 1e6,
++                self.n
++            );
++            (self.sum_ns, self.max_ns, self.n) = (0.0, 0.0, 0);
++        }
++    }
++}
++
+ impl<'d> Present<'d> {
+     /// Build the render pass, pipeline and first swapchain for `dev`'s surface.
+     ///
+@@ -175,6 +229,29 @@ impl<'d> Present<'d> {
+             }?);
+         }
+ 
++        let draw_timer = if crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1") {
++            // SAFETY: the instance and physical device are live for the lane's lifetime.
++            let limits = unsafe { dev.base.instance.get_physical_device_properties(dev.pdev) }.limits;
++            // SAFETY: the builder is a local; the pool is owned by this struct and destroyed in drop.
++            let pool = unsafe {
++                dev.device.create_query_pool(
++                    &vk::QueryPoolCreateInfo::default()
++                        .query_type(vk::QueryType::TIMESTAMP)
++                        .query_count(2 * FRAMES as u32),
++                    None,
++                )
++            }?;
++            Some(DrawTimer {
++                pool,
++                period_ns: f64::from(limits.timestamp_period),
++                written: [false; FRAMES],
++                sum_ns: 0.0,
++                max_ns: 0.0,
++                n: 0,
++            })
++        } else {
++            None
++        };
+         let mut p = Present {
+             device: dev.device.clone(),
+             queue: dev.queue,
+@@ -210,6 +287,7 @@ impl<'d> Present<'d> {
+                 extent: vk::Extent2D::default(),
+             },
+             frame: 0,
++            draw_timer,
+             _dev: PhantomData,
+         };
+         p.rebuild_swapchain(color_space)?;
+@@ -344,6 +422,9 @@ impl<'d> Present<'d> {
+                 .wait_for_fences(&[fence], true, u64::MAX)
+                 .map_err(|e| anyhow!("wait_for_fences: {e}"))?;
+         }
++        if let Some(t) = self.draw_timer.as_mut() {
++            t.collect(&self.device, frame);
++        }
+         // SAFETY: the semaphore is unsignalled — its previous acquire was consumed by the
+         // submit whose fence we just waited on.
+         let acquired = unsafe {
+@@ -433,6 +514,9 @@ impl<'d> Present<'d> {
+                 self.swap_d.queue_present(self.queue, &present)
+             }
+         };
++        if let Some(t) = self.draw_timer.as_mut() {
++            t.written[frame] = true;
++        }
+         self.frame = (frame + 1) % FRAMES;
+         match outcome {
+             Ok(false) if !suboptimal => Ok(true),
+@@ -486,6 +570,16 @@ impl<'d> Present<'d> {
+         // SAFETY: the caller holds `cmd` recording; every handle is owned by this struct and
+         // the borrowed builders are locals that outlive the calls.
+         unsafe {
++            if let Some(t) = &self.draw_timer {
++                let first = 2 * self.frame as u32;
++                self.device.cmd_reset_query_pool(cmd, t.pool, first, 2);
++                self.device.cmd_write_timestamp(
++                    cmd,
++                    vk::PipelineStageFlags::TOP_OF_PIPE,
++                    t.pool,
++                    first,
++                );
++            }
+             self.device.cmd_begin_render_pass(
+                 cmd,
+                 &vk::RenderPassBeginInfo::default()
+@@ -527,6 +621,14 @@ impl<'d> Present<'d> {
+             );
+             self.device.cmd_draw(cmd, 3, 1, 0, 0);
+             self.device.cmd_end_render_pass(cmd);
++            if let Some(t) = &self.draw_timer {
++                self.device.cmd_write_timestamp(
++                    cmd,
++                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
++                    t.pool,
++                    2 * self.frame as u32 + 1,
++                );
++            }
+         }
+     }
+ 
+@@ -623,6 +725,9 @@ impl Drop for Present<'_> {
+             for fence in self.fences.drain(..) {
+                 self.device.destroy_fence(fence, None);
+             }
++            if let Some(t) = self.draw_timer.take() {
++                self.device.destroy_query_pool(t.pool, None);
++            }
+             self.device.destroy_command_pool(self.cmd_pool, None);
+             self.device.destroy_descriptor_pool(self.desc_pool, None);
+             self.device.destroy_pipeline(self.pipeline, None);
+diff --git a/crates/pf-client-core/src/video_pyrowave.rs b/crates/pf-client-core/src/video_pyrowave.rs
+index b56a813ed..05145617f 100644
+--- a/crates/pf-client-core/src/video_pyrowave.rs
++++ b/crates/pf-client-core/src/video_pyrowave.rs
+@@ -61,6 +61,28 @@ pub fn set_idwt_path_override(fragment: Option<bool>) {
+     IDWT_PATH.store(v, std::sync::atomic::Ordering::Relaxed);
+ }
+ 
++/// Log the codec's own GPU timings (dequant, inverse wavelet) every [`GPU_STATS_EVERY`] frames.
++static GPU_STATS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++
++/// Frames between two readouts of the codec's GPU timings. Five seconds at 120 Hz.
++const GPU_STATS_EVERY: u32 = 600;
++
++/// Turn the periodic GPU timing readout on or off, for decoders that are open or opened later.
++/// The codec writes its timestamps either way; this only reads them out.
++pub fn set_gpu_stats(on: bool) {
++    GPU_STATS.store(on, std::sync::atomic::Ordering::Relaxed);
++}
++
++/// One line of the codec's timing report: `"<step>: <ms> ms per frame"`.
++unsafe extern "C" fn gpu_stats_cb(_ud: *mut c_void, msg: *const c_char) {
++    if msg.is_null() {
++        return;
++    }
++    // SAFETY: the codec passes a NUL-terminated string that lives for this call.
++    let line = unsafe { std::ffi::CStr::from_ptr(msg) }.to_string_lossy();
++    tracing::info!(step = line.trim_end(), "PyroWave GPU time");
++}
++
+ fn idwt_path_override() -> Option<bool> {
+     match IDWT_PATH.load(std::sync::atomic::Ordering::Relaxed) {
+         1 => Some(false),
+@@ -454,6 +476,8 @@ pub struct PyroWaveDecoder {
+     /// The inverse wavelet runs as render passes into the planes (attachments) instead of
+     /// compute writes (storage images). Fixed for the decoder's life: the ring is built for it.
+     fragment_path: bool,
++    /// Frames decoded since the last GPU timing readout.
++    stats_frames: u32,
+ }
+ 
+ // SAFETY: used only from the single decode thread; the shared-queue accesses go through
+@@ -679,6 +703,7 @@ impl PyroWaveDecoder {
+             hdr16,
+             wire_window: shard_payload.max(64),
+             fragment_path,
++            stats_frames: 0,
+         })
+     }
+ 
+@@ -1043,6 +1068,22 @@ impl PyroWaveDecoder {
+             r
+         };
+         pw_check(dec_res, "decode_gpu_buffer")?;
++        self.stats_frames += 1;
++        if self.stats_frames >= GPU_STATS_EVERY {
++            self.stats_frames = 0;
++            if GPU_STATS.load(std::sync::atomic::Ordering::Relaxed) {
++                // SAFETY: `pw_dev` is this decoder's; the callback is called only inside
++                // this call, on this thread. `reset` starts the next window.
++                unsafe {
++                    pw::pyrowave_device_report_performance_stats(
++                        self.pw_dev,
++                        Some(gpu_stats_cb),
++                        std::ptr::null_mut(),
++                        true,
++                    );
++                }
++            }
++        }
+ 
+         // Decode writes → presenter fragment sampling. The planes end in GENERAL on either
+         // path: that is what the planar CSC descriptors use.

@@ -1,0 +1,187 @@
+From 9a318d324972985a49798468f1a7ed65af191fb1 Mon Sep 17 00:00:00 2001
+From: Mokomis <24596443+Mokomis@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 16:37:16 -0500
+Subject: [PATCH] feat(android): send the panel's HDR luminance range to the
+ host
+
+An HDR session now fills Hello::display_hdr from Display.HdrCapabilities
+(peak and minimum nits), so the host's virtual display advertises this
+panel's volume instead of its default. Nothing is sent on an SDR session
+or when the panel reports no peak.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../kotlin/io/unom/punktfunk/HostConnect.kt   |  7 ++-
+ .../main/kotlin/io/unom/punktfunk/Settings.kt | 17 +++++++
+ .../io/unom/punktfunk/kit/ConnectRequest.kt   |  7 +++
+ clients/android/native/src/session/connect.rs | 48 +++++++++++++++++--
+ 4 files changed, 75 insertions(+), 4 deletions(-)
+
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
+index a1d7793cc..827f7d47f 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
+@@ -171,6 +171,8 @@ private suspend fun dial(
+         baseW, baseH, settings.renderScale, RenderScale.maxDimension(settings.codec)
+     )
+     val hdrEnabled = settings.hdrEnabled && displaySupportsHdr(context)
++    // Only an HDR session has a volume worth telling the host about.
++    val hdrLuminance = if (hdrEnabled) displayHdrLuminance(context) else null
+     // 10-bit on its own asks nothing of the PANEL: Main10 at BT.709 decodes and presents on an
+     // ordinary display, and the compositor dithers what it cannot show. So this is the user's
+     // setting alone, with no display probe — unlike HDR directly above it.
+@@ -226,7 +228,10 @@ private suspend fun dial(
+             certPem = identity.certPem, keyPem = identity.privateKeyPem, pinHex = pinHex,
+             bitrateKbps = if (pyrowave) 0 else settings.bitrateKbps, compositorPref = settings.compositor,
+             gamepadPref = gamepadPref,
+-            hdrEnabled = hdrEnabled, tenBitSdr = tenBitSdr, multiSliceOk = multiSlice,
++            hdrEnabled = hdrEnabled, tenBitSdr = tenBitSdr,
++            displayPeakNits = hdrLuminance?.first ?: 0f,
++            displayMinNits = hdrLuminance?.second ?: 0f,
++            multiSliceOk = multiSlice,
+             framePartsOk = frameParts,
+             audioChannels = settings.audioChannels,
+             // The audio format this session asks for. Only ever a request: the host's own gate
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
+index 9a723084d..a1c8e04e8 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
+@@ -561,6 +561,23 @@ fun displaySupportsHdr(context: Context): Boolean {
+     return supported
+ }
+ 
++/**
++ * This panel's HDR luminance range as (peak, min) nits, or null when the display does not say.
++ * Read from the Display-level capabilities: the per-mode query that [displaySupportsHdr] prefers
++ * carries types only, no luminance. A panel that reports no usable peak yields null, and the host
++ * then keeps its own default rather than tone-mapping to a made-up number.
++ */
++fun displayHdrLuminance(context: Context): Pair<Float, Float>? {
++    val display = probeDisplay(context) ?: return null
++    @Suppress("DEPRECATION")
++    val caps = display.hdrCapabilities ?: return null
++    val peak = caps.desiredMaxLuminance
++    if (!peak.isFinite() || peak <= 0f) return null
++    val min = caps.desiredMinLuminance.takeIf { it.isFinite() && it >= 0f } ?: 0f
++    Log.i("punktfunk", "display HDR luminance peak=$peak min=$min nits")
++    return peak to min
++}
++
+ /**
+  * Resolve [Settings] (with its `0`=native and [SAFE_AREA_MODE] placeholders) to the concrete mode to
+  * request. The safe-area sentinel is checked first because it resolves BOTH axes together — it is one
+diff --git a/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/ConnectRequest.kt b/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/ConnectRequest.kt
+index ec63a4aa0..c7442106c 100644
+--- a/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/ConnectRequest.kt
++++ b/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/ConnectRequest.kt
+@@ -31,6 +31,11 @@ data class ConnectRequest(
+     /** Ask for 10-bit WITHOUT HDR — Main10 at BT.709, for banding-free gradients on an
+      *  ordinary panel. Ignored while [hdrEnabled] is set, which already implies 10-bit. */
+     val tenBitSdr: Boolean,
++    /** This panel's HDR luminance range in nits, for `Hello::display_hdr` — the host builds its
++     *  virtual display's HDR volume from it, so games tone-map to this panel instead of the
++     *  host's default. `0` = unknown; nothing is sent and the host keeps its default. */
++    val displayPeakNits: Float = 0f,
++    val displayMinNits: Float = 0f,
+     /** Every decoder this device would use tolerates multi-slice AUs
+      *  ([VideoDecoders.multiSliceTolerant]) — advertises `VIDEO_CAP_MULTI_SLICE`; false keeps
+      *  the host at single-slice frames (the safe pre-0.17 wire shape). */
+@@ -100,6 +105,8 @@ data class ConnectRequest(
+         .put("gamepad_pref", gamepadPref)
+         .put("hdr_enabled", hdrEnabled)
+         .put("ten_bit_sdr", tenBitSdr)
++        .put("display_peak_nits", displayPeakNits.toDouble())
++        .put("display_min_nits", displayMinNits.toDouble())
+         .put("multi_slice_ok", multiSliceOk)
+         .put("frame_parts_ok", framePartsOk)
+         .put("audio_channels", audioChannels)
+diff --git a/clients/android/native/src/session/connect.rs b/clients/android/native/src/session/connect.rs
+index ea39b97bb..4de89f408 100644
+--- a/clients/android/native/src/session/connect.rs
++++ b/clients/android/native/src/session/connect.rs
+@@ -231,6 +231,30 @@ fn audio_rate_is_openable(_rate_hz: u32, _channels: u8) -> bool {
+ ///
+ /// Android ARMv7 always asks for ChaCha because software AES limits these TV-class devices. Other
+ /// ABIs keep AES; their hardware acceleration makes the tradeoff target-specific.
++/// The panel's HDR volume for `Hello::display_hdr`, from the luminance range Android reports
++/// (`Display.HdrCapabilities`). BT.2020 primaries and D65, the container the HDR10 surface
++/// presents in — the same shape as `punktfunk_core::client::display_hdr_env_override`. `None`
++/// unless the session is HDR and the panel named a usable peak.
++fn display_hdr(hdr: bool, peak_nits: f32, min_nits: f32) -> Option<punktfunk_core::quic::HdrMeta> {
++    if !hdr || !peak_nits.is_finite() || peak_nits < 1.0 {
++        return None;
++    }
++    let min_nits = if min_nits.is_finite() && min_nits > 0.0 {
++        min_nits
++    } else {
++        0.0
++    };
++    // Wire unit is 0.0001 cd/m²; the float-to-int cast saturates.
++    Some(punktfunk_core::quic::HdrMeta {
++        display_primaries: [[8500, 39850], [6550, 2300], [35400, 14600]], // BT.2020 G, B, R
++        white_point: [15635, 16450],                                      // D65
++        max_display_mastering_luminance: (peak_nits * 10_000.0).round() as u32,
++        min_display_mastering_luminance: (min_nits * 10_000.0).round() as u32,
++        max_cll: 0,
++        max_fall: 0,
++    })
++}
++
+ fn video_caps(hdr: bool, ten_bit_sdr: bool, multi_slice: bool, full_chroma: bool) -> u8 {
+     use punktfunk_core::quic::{
+         VIDEO_CAP_10BIT, VIDEO_CAP_444, VIDEO_CAP_CHACHA20, VIDEO_CAP_HDR, VIDEO_CAP_MULTI_SLICE,
+@@ -320,6 +344,16 @@ mod caps_tests {
+             video_caps(true, false, true, false) | VIDEO_CAP_444
+         );
+     }
++
++    #[test]
++    fn display_volume_is_sent_only_for_an_hdr_session_with_a_known_peak() {
++        assert!(display_hdr(false, 1600.0, 0.001).is_none());
++        assert!(display_hdr(true, 0.0, 0.0).is_none());
++        assert!(display_hdr(true, f32::NAN, 0.0).is_none());
++        let m = display_hdr(true, 1600.0, 0.001).unwrap();
++        assert_eq!(m.max_display_mastering_luminance, 16_000_000);
++        assert_eq!(m.min_display_mastering_luminance, 10);
++    }
+ }
+ 
+ /// What Kotlin hands `nativeConnect`, as `ConnectRequest.toJson()` writes it (kit/ConnectRequest.kt
+@@ -352,6 +386,11 @@ struct ConnectRequest {
+     hdr_enabled: bool,
+     #[serde(default)]
+     ten_bit_sdr: bool,
++    /// The panel's HDR luminance range in nits (`0` = unknown), for `Hello::display_hdr`.
++    #[serde(default)]
++    display_peak_nits: f32,
++    #[serde(default)]
++    display_min_nits: f32,
+     #[serde(default)]
+     multi_slice_ok: bool,
+     #[serde(default)]
+@@ -444,6 +483,8 @@ fn connect(req: ConnectRequest) -> jlong {
+         gamepad_pref,
+         hdr_enabled,
+         ten_bit_sdr,
++        display_peak_nits,
++        display_min_nits,
+         multi_slice_ok,
+         frame_parts_ok,
+         audio_channels,
+@@ -563,9 +604,10 @@ fn connect(req: ConnectRequest) -> jlong {
+             }
+         },
+         preferred_codec,
+-        // No display-volume forwarding from Android yet (the panel tone-maps PQ itself via the
+-        // Surface dataspace + static metadata) — the host keeps its virtual-display EDID defaults.
+-        display_hdr: None,
++        // The panel's own HDR volume, so the host's virtual display advertises this peak and
++        // games tone-map to it. None on an SDR session or a panel that reports no peak — the
++        // host then keeps its virtual-display EDID defaults.
++        display_hdr: display_hdr(hdr_enabled, display_peak_nits, display_min_nits),
+         // No CLIENT_CAP_CURSOR: this client does not render the host cursor locally (no
+         // shape/state planes in the jni surface) — advertising it would stream cursor-less.
+         // CLIENT_CAP_PHASE_LOCK is honest: the async decode loop's presenter feeds
+-- 
+2.55.0
+
