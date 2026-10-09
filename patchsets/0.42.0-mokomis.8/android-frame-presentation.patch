@@ -1,0 +1,242 @@
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
+index 827f7d47f..6585da086 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/HostConnect.kt
+@@ -196,6 +196,7 @@ private suspend fun dial(
+         // Transport-level half of "Low-latency mode (experimental)" (DSCP marking on the media
+         // sockets) — must be applied before connect, since sockets are tagged at creation.
+         NativeBridge.nativeSetLowLatencyMode(settings.lowLatencyMode)
++        NativeBridge.nativeSetFramePresentation(settings.framePresentationWire())
+         val multiSlice = VideoDecoders.multiSliceTolerant()
+         val partialFrame = VideoDecoders.partialFrameCapable()
+         // Slice-progressive delivery: decoder truth AND the low-latency toggle — parts are part of
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
+index a1c8e04e8..68e9cd8f3 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Settings.kt
+@@ -217,6 +217,14 @@ data class Settings(
+      * Only meaningful when [presentPriority] is `"smooth"`.
+      */
+     val smoothBuffer: Int = 0,
++    /**
++     * How hardware-decoded frames reach the panel (`android.frame_presentation`; PyroWave has its
++     * own path and ignores this): `"auto"` (default) = the platform's choice, ASurfaceControl
++     * with one frame per vsync slot; `"direct"` = the SurfaceView with the timeline presenter;
++     * `"arrival"` = the SurfaceView with each frame released the moment it is decoded. The two
++     * SurfaceView choices exist for panels where the automatic one holds frames unevenly.
++     */
++    val framePresentation: String = "auto",
+     /**
+      * Wake-on-LAN a saved host before connecting when it isn't currently seen on mDNS. On (default):
+      * a connect to a host with a learned MAC that isn't advertising sends a magic packet and waits
+@@ -1029,6 +1037,19 @@ val STATS_SCALE_OPTIONS = listOf(75, 100, 125, 150, 175, 200).map { it to "$it %
+ fun Settings.presentPriorityWire(): Int = if (presentPriority == "smooth") 1 else 0
+ 
+ /** (stored value, label) for the presenter-intent picker — the Apple client's table verbatim. */
++/** [Settings.framePresentation] as the int `nativeSetFramePresentation` takes. */
++fun Settings.framePresentationWire(): Int = when (framePresentation) {
++    "direct" -> 1
++    "arrival" -> 2
++    else -> 0
++}
++
++val FRAME_PRESENTATION_OPTIONS = listOf(
++    "auto" to "Automatic",
++    "direct" to "Direct",
++    "arrival" to "Direct, on arrival",
++)
++
+ val PRESENT_PRIORITY_OPTIONS = listOf(
+     "latency" to "Lowest latency",
+     "smooth" to "Smoothness",
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
+index 7e175a4fe..24f1f89ec 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
+@@ -88,6 +88,8 @@ internal object SettingsFields {
+             overlay({ it.presentPriority }, { o, v -> o.copy(presentPriority = v) })),
+         field("smoothBuffer", "smooth_buffer", IntKind, { it.smoothBuffer }, { s, v -> s.copy(smoothBuffer = v) },
+             overlay({ it.smoothBuffer }, { o, v -> o.copy(smoothBuffer = v) })),
++        field("framePresentation", "android.frame_presentation", StrKind, { it.framePresentation },
++            { s, v -> s.copy(framePresentation = v) }, prefsKey = "frame_presentation"),
+         field("autoWakeEnabled", "auto_wake", BoolKind, { it.autoWakeEnabled }, { s, v -> s.copy(autoWakeEnabled = v) },
+             prefsKey = "auto_wake_enabled"),
+         field("backgroundKeepAlive", "background_keep_alive", BoolKind, { it.backgroundKeepAlive },
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
+index 15f9b541c..8b2f23cdd 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
+@@ -973,11 +973,23 @@ private fun DisplaySettings(s: Settings, update: (Settings) -> Unit, context: an
+             s.tenBitSdr != d.tenBitSdr,
+             s.lowLatencyMode != d.lowLatencyMode,
+             s.compositor != d.compositor,
++            s.framePresentation != d.framePresentation,
+         ),
+         fields = setOf(
+             "smooth_buffer", "render_scale", "codec", "ten_bit_sdr", "low_latency_mode", "compositor",
++            "frame_presentation",
+         ),
+     ) {
++        SettingDropdown(
++            label = "Frame presentation",
++            options = FRAME_PRESENTATION_OPTIONS,
++            selected = FRAME_PRESENTATION_OPTIONS.firstOrNull { it.first == s.framePresentation }?.first
++                ?: "auto",
++            field = "frame_presentation",
++            caption = "How decoded video reaches the screen (not PyroWave). Try Direct if motion " +
++                "judders when the game's frame rate is below the stream's; on arrival shows " +
++                "each frame the moment it is decoded.",
++        ) { v -> update(s.copy(framePresentation = v)) }
+         if (smoothing) {
+             SettingDropdown(
+                 label = "Smoothness buffer",
+diff --git a/clients/android/app/src/test/kotlin/io/unom/punktfunk/SettingsFieldsTest.kt b/clients/android/app/src/test/kotlin/io/unom/punktfunk/SettingsFieldsTest.kt
+index 98467c2c6..6bede03be 100644
+--- a/clients/android/app/src/test/kotlin/io/unom/punktfunk/SettingsFieldsTest.kt
++++ b/clients/android/app/src/test/kotlin/io/unom/punktfunk/SettingsFieldsTest.kt
+@@ -38,7 +38,8 @@ class SettingsFieldsTest {
+         statsVerbosity = StatsVerbosity.DETAILED, advancedStats = true, hudPlacement = "bottomTrailing",
+         statsScalePct = 150, exitHint = false, showAdvanced = true, touchMode = TouchMode.TOUCH, gamepadUiEnabled = false,
+         reduceUiResolution = true, gamepadUiMode = GAMEPAD_UI_ALWAYS, uiPalette = "crimson",
+-        lowLatencyMode = false, presentPriority = "smooth", smoothBuffer = 2, autoWakeEnabled = false,
++        lowLatencyMode = false, presentPriority = "smooth", smoothBuffer = 2, framePresentation = "arrival",
++        autoWakeEnabled = false,
+         backgroundKeepAlive = true, backgroundTimeoutMinutes = 30,
+         rumbleOnPhone = true, gyroOnPhone = true, sc2Capture = false, dsCapture = false,
+         padHaptics = false, padSpeaker = true, mouseMode = MouseMode.CAPTURE, invertScroll = true,
+diff --git a/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/NativeBridge.kt b/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/NativeBridge.kt
+index 0fee043e9..6cb8f4729 100644
+--- a/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/NativeBridge.kt
++++ b/clients/android/kit/src/main/kotlin/io/unom/punktfunk/kit/NativeBridge.kt
+@@ -209,6 +209,13 @@ object NativeBridge {
+      */
+     external fun nativeSetLowLatencyMode(enabled: Boolean)
+ 
++    /**
++     * Apply the "Frame presentation" setting to video sessions started after this call:
++     * 0 automatic, 1 direct, 2 on arrival. Called beside [nativeSetLowLatencyMode]. Cheap (one
++     * atomic store); UI-safe.
++     */
++    external fun nativeSetFramePresentation(mode: Int)
++
+     /**
+      * The MediaCodec MIME the host resolved for this session (`"video/hevc"` / `"video/avc"` /
+      * `"video/av01"`), or `""` on a `0` or closed handle. Kotlin ranks `MediaCodecList` decoders
+diff --git a/clients/android/native/src/decode/asc_presenter.rs b/clients/android/native/src/decode/asc_presenter.rs
+index 20acc992c..27917e6fa 100644
+--- a/clients/android/native/src/decode/asc_presenter.rs
++++ b/clients/android/native/src/decode/asc_presenter.rs
+@@ -917,12 +917,13 @@ impl AscBackend {
+ 
+ /// Whether the ASurfaceControl backend is selected: ON everywhere but ChromeOS. ARC latches the
+ /// child layer and signals its present fence, yet Chrome can leave it undrawn, and nothing on
+-/// the Android side can tell. `debug.punktfunk.present_backend` overrides both ways: `surfaceview`
+-/// forces the SurfaceView presenter, `asc` forces this backend on ChromeOS.
++/// the Android side can tell. The "Frame presentation" setting, when not automatic, takes the
++/// SurfaceView. `debug.punktfunk.present_backend` overrides all of it both ways: `surfaceview`
++/// forces the SurfaceView presenter, `asc` forces this backend.
+ pub(super) fn asc_backend_selected(chromeos: bool) -> bool {
+     match sysprop(c"debug.punktfunk.present_backend").as_deref() {
+         Some("surfaceview") => false,
+         Some("asc") => true,
+-        _ => !chromeos,
++        _ => !chromeos && super::frame_presentation() == super::PRESENT_AUTO,
+     }
+ }
+diff --git a/clients/android/native/src/decode/async_loop.rs b/clients/android/native/src/decode/async_loop.rs
+index 92bc6a7c0..4c0b57346 100644
+--- a/clients/android/native/src/decode/async_loop.rs
++++ b/clients/android/native/src/decode/async_loop.rs
+@@ -371,7 +371,7 @@ fn select_presenter(asc: bool, opts: &DecodeOptions, refresh_hz: u32) -> Option<
+         return None;
+     }
+     if presenter_disabled_by_sysprop() {
+-        log::info!("decode: presenter = arrival (sysprop) — legacy immediate release");
++        log::info!("decode: presenter = arrival — legacy immediate release");
+         return None;
+     }
+     let priority = PresentPriority::resolve(opts.present_priority, opts.smooth_buffer);
+@@ -557,7 +557,7 @@ fn bring_up(
+             if opts.chromeos {
+                 "ChromeOS"
+             } else {
+-                "present_backend sysprop"
++                "frame presentation setting or sysprop"
+             }
+         );
+     }
+diff --git a/clients/android/native/src/decode/mod.rs b/clients/android/native/src/decode/mod.rs
+index 145d36a5f..064a038b9 100644
+--- a/clients/android/native/src/decode/mod.rs
++++ b/clients/android/native/src/decode/mod.rs
+@@ -23,6 +23,27 @@ mod setup;
+ mod surface_control;
+ mod vsync;
+ 
++/// The user's "Frame presentation" setting (`android.frame_presentation`), process-wide like
++/// the transport defaults: [`PRESENT_AUTO`], [`PRESENT_DIRECT`] or [`PRESENT_ARRIVAL`].
++static FRAME_PRESENTATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
++
++/// The platform's own choice: ASurfaceControl everywhere but ChromeOS.
++pub(crate) const PRESENT_AUTO: u8 = 0;
++/// The SurfaceView with the timeline presenter.
++pub(crate) const PRESENT_DIRECT: u8 = 1;
++/// The SurfaceView with each frame released the moment it is decoded.
++pub(crate) const PRESENT_ARRIVAL: u8 = 2;
++
++/// Store the setting for sessions started after this call. Unknown values mean automatic.
++pub(crate) fn set_frame_presentation(mode: u8) {
++    let mode = if mode <= PRESENT_ARRIVAL { mode } else { PRESENT_AUTO };
++    FRAME_PRESENTATION.store(mode, std::sync::atomic::Ordering::Relaxed);
++}
++
++fn frame_presentation() -> u8 {
++    FRAME_PRESENTATION.load(std::sync::atomic::Ordering::Relaxed)
++}
++
+ use async_loop::run_async;
+ pub(crate) use setup::{codec_label, codec_mime};
+ // Shared with the PyroWave lane, which exists only where the codec is built (see `crate::pyro`).
+diff --git a/clients/android/native/src/decode/presenter.rs b/clients/android/native/src/decode/presenter.rs
+index 6acbb2fe8..299951b8c 100644
+--- a/clients/android/native/src/decode/presenter.rs
++++ b/clients/android/native/src/decode/presenter.rs
+@@ -771,9 +771,11 @@ fn release_unrendered(codec: &MediaCodec, index: usize) {
+ }
+ 
+ /// `debug.punktfunk.presenter` sysprop: `arrival` = the legacy release-immediately path,
+-/// anything else / unset = the timeline presenter. The rebuild-free on-device A/B lever.
++/// anything else / unset = the timeline presenter. The rebuild-free on-device A/B lever. The
++/// "Frame presentation" setting's on-arrival choice selects the same path.
+ pub(super) fn presenter_disabled_by_sysprop() -> bool {
+     sysprop(c"debug.punktfunk.presenter").as_deref() == Some("arrival")
++        || super::frame_presentation() == super::PRESENT_ARRIVAL
+ }
+ 
+ #[cfg(test)]
+diff --git a/clients/android/native/src/session/connect.rs b/clients/android/native/src/session/connect.rs
+index 4de89f408..4f6bd5d27 100644
+--- a/clients/android/native/src/session/connect.rs
++++ b/clients/android/native/src/session/connect.rs
+@@ -82,6 +82,21 @@ pub extern "system" fn Java_io_unom_punktfunk_kit_NativeBridge_nativeSetLowLaten
+     })
+ }
+ 
++/// `NativeBridge.nativeSetFramePresentation(mode)` — the "Frame presentation" setting for video
++/// sessions started after this call: 0 automatic, 1 direct, 2 on arrival. Called at the same
++/// choke point as [`Java_io_unom_punktfunk_kit_NativeBridge_nativeSetLowLatencyMode`].
++#[cfg(target_os = "android")]
++#[unsafe(no_mangle)]
++pub extern "system" fn Java_io_unom_punktfunk_kit_NativeBridge_nativeSetFramePresentation(
++    _env: EnvUnowned,
++    _this: JObject,
++    mode: jni::sys::jint,
++) {
++    jni_guard((), || {
++        crate::decode::set_frame_presentation(u8::try_from(mode).unwrap_or(0));
++    })
++}
++
+ /// `debug.punktfunk.force_parts` = 1: arm slice-progressive parts delivery even when the
+ /// Kotlin `FEATURE_PartialFrame` probe said no — the rebuild-free on-glass experiment for a
+ /// decoder that may accept `BUFFER_FLAG_PARTIAL_FRAME` without declaring the feature (the NP3's

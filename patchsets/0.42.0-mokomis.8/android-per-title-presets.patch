@@ -1,0 +1,330 @@
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/LibraryScreen.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/LibraryScreen.kt
+index f07a85010..874ee2265 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/LibraryScreen.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/LibraryScreen.kt
+@@ -210,6 +210,17 @@ fun LibraryScreen(
+     }
+     val streamSettings = remember(settings, preset) { settings.effectiveFor(preset) }
+     val knownHostStore = remember { KnownHostStore(context) }
++    // Per-title preset bindings ([KnownHost.gamePresets]), the same ones the console UI writes.
++    var gamePresets by remember(host.id) { mutableStateOf(host.gamePresets) }
++    var bindAsk by remember { mutableStateOf<GameEntry?>(null) }
++    fun bindPreset(game: GameEntry, presetId: String?) {
++        // Re-read the record: the copy this screen was opened with may be stale by now.
++        val current = knownHostStore.byId(host.id) ?: host
++        val next = current.gamePresets.toMutableMap()
++            .apply { if (presetId == null) remove(game.id) else put(game.id, presetId) }
++        knownHostStore.save(current.copy(gamePresets = next))
++        gamePresets = next
++    }
+ 
+     // Keyed on the mgmt port too: a discovery tick can learn it after this screen is composed, and
+     // the fetch must redo itself against the real port rather than stay on a stale 47990 failure.
+@@ -242,18 +253,26 @@ fun LibraryScreen(
+             // "this is the one I was going for", and coming back to it is right either way.
+             LibraryPosition.remember(context, host.id, game.id)
+         }
++        // A title's own binding beats the shelf's preset, unless the shelf was opened from a
++        // pinned card: that pin is a one-off pick, which beats every binding.
++        val gamePreset = gamePresets[game.id]
++            ?.takeIf { pinnedPresetId == null && !game.isDesktop }
++            ?.let { PresetStore(context).byId(it) }
++        val launchPreset = gamePreset ?: preset
++        val launchSettings =
++            if (gamePreset != null) settings.effectiveFor(gamePreset) else streamSettings
+         scope.launch {
+             val handle = connectToHost(
+-                context, streamSettings, identity,
++                context, launchSettings, identity,
+                 host.address, host.port, host.fpHex,
+                 launch = game.id.takeUnless { game.isDesktop },
+                 dialer = "touch/library",
+-                preset = preset,
++                preset = launchPreset,
+             )
+             launching = false
+             if (handle != 0L) {
+                 onLaunched(
+-                    SessionFactory.afterDial(handle, host, streamSettings, preset, knownHostStore).copy(
++                    SessionFactory.afterDial(handle, host, launchSettings, launchPreset, knownHostStore).copy(
+                         // Where to come back to when this game exits — this shelf, pin and all,
+                         // not the host's default one.
+                         launchedFromLibrary = true,
+@@ -349,8 +368,37 @@ fun LibraryScreen(
+         onLaunch = { identity, game -> launch(identity, game) },
+         onCopyLink = { game -> copyLink(game) },
+         onEndGame = { game -> endAsk = game },
++        onBindPreset = { game -> bindAsk = game },
+         resumeAt = resumeAt,
+     )
++
++    bindAsk?.let { game ->
++        val presets = remember(game.id) { PresetStore(context).all() }
++        val bound = gamePresets[game.id]
++        PunktfunkDialog(
++            title = "Preset for ${game.title}",
++            onDismiss = { bindAsk = null },
++            actions = listOf(DialogAction("Done", primary = true) { bindAsk = null }),
++        ) {
++            if (presets.isEmpty()) {
++                PromptText("No presets yet. Create one in Settings, then choose it here.")
++            } else {
++                Column {
++                    PromptText("What this title streams with, overriding the host's default.")
++                    DropdownMenuItem(
++                        text = { Text((if (bound == null) "✓ " else "") + "Use the host's default") },
++                        onClick = { bindPreset(game, null) },
++                    )
++                    presets.forEach { p ->
++                        DropdownMenuItem(
++                            text = { Text((if (bound == p.id) "✓ " else "") + p.name) },
++                            onClick = { bindPreset(game, p.id) },
++                        )
++                    }
++                }
++            }
++        }
++    }
+ }
+ 
+ /**
+@@ -478,6 +526,8 @@ private fun TouchLibrary(
+     onCopyLink: (GameEntry) -> Unit,
+     /** Ask to end a title this device launched; the caller confirms. */
+     onEndGame: (GameEntry) -> Unit = {},
++    /** Open the per-title preset picker. */
++    onBindPreset: (GameEntry) -> Unit = {},
+     /** The title this shelf last launched — where the grid opens. Null on a first visit. */
+     resumeAt: String? = null,
+ ) {
+@@ -547,6 +597,7 @@ private fun TouchLibrary(
+                     onLaunch = { game -> onLaunch(state.identity, game) },
+                     onCopyLink = onCopyLink,
+                     onEndGame = onEndGame,
++                    onBindPreset = onBindPreset,
+                     running = state.running,
+                     resumeAt = resumeAt,
+                     modifier = Modifier.weight(1f),
+@@ -585,6 +636,7 @@ internal fun TouchGrid(
+     onLaunch: (GameEntry) -> Unit,
+     onCopyLink: (GameEntry) -> Unit,
+     onEndGame: (GameEntry) -> Unit = {},
++    onBindPreset: (GameEntry) -> Unit = {},
+     /**
+      * Which titles the host already has up, keyed by library id — so a tile the player can return
+      * to says `Resume` rather than looking like every other one. Empty on an older host, an
+@@ -632,6 +684,7 @@ internal fun TouchGrid(
+                 TouchPoster(
+                     it, loader, onLaunch, onCopyLink, running[it.id] != null,
+                     endable = running[it.id]?.endable == true, onEndGame = onEndGame,
++                    onBindPreset = onBindPreset,
+                 )
+             }
+         }
+@@ -641,6 +694,7 @@ internal fun TouchGrid(
+                 TouchPoster(
+                     it, loader, onLaunch, onCopyLink, running[it.id] != null,
+                     endable = running[it.id]?.endable == true, onEndGame = onEndGame,
++                    onBindPreset = onBindPreset,
+                 )
+             }
+         }
+@@ -696,6 +750,7 @@ private fun TouchPoster(
+     /** Up, and this device launched it: the long press offers End game. */
+     endable: Boolean = false,
+     onEndGame: (GameEntry) -> Unit = {},
++    onBindPreset: (GameEntry) -> Unit = {},
+ ) {
+     var menu by remember { mutableStateOf(false) }
+     val shape = MaterialTheme.shapes.medium
+@@ -773,6 +828,16 @@ private fun TouchPoster(
+                     onCopyLink(game)
+                 },
+             )
++            // The launcher tile and the desktop are not titles a preset can be bound to.
++            if (!game.isLauncher && !game.isDesktop) {
++                DropdownMenuItem(
++                    text = { Text("Settings preset…") },
++                    onClick = {
++                        menu = false
++                        onBindPreset(game)
++                    },
++                )
++            }
+             if (endable) {
+                 DropdownMenuItem(
+                     text = { Text("End game") },
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Presets.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Presets.kt
+index 53149fdb2..9b050cbf3 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/Presets.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/Presets.kt
+@@ -68,6 +68,8 @@ data class SettingsOverlay(
+     /** The timeline presenter's intent pair — cross-client keys, see [Settings.presentPriority]. */
+     val presentPriority: String? = null,
+     val smoothBuffer: Int? = null,
++    /** Android-only, like [lowLatencyMode]: which display path suits a title's frame rate. */
++    val framePresentation: String? = null,
+     /**
+      * Overlay keys a newer build wrote and this one doesn't model — carried through a load→save
+      * round-trip untouched. The don't-clobber rule: opening and saving a preset on an older client
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
+index 24f1f89ec..333f56268 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsFields.kt
+@@ -89,7 +89,9 @@ internal object SettingsFields {
+         field("smoothBuffer", "smooth_buffer", IntKind, { it.smoothBuffer }, { s, v -> s.copy(smoothBuffer = v) },
+             overlay({ it.smoothBuffer }, { o, v -> o.copy(smoothBuffer = v) })),
+         field("framePresentation", "android.frame_presentation", StrKind, { it.framePresentation },
+-            { s, v -> s.copy(framePresentation = v) }, prefsKey = "frame_presentation"),
++            { s, v -> s.copy(framePresentation = v) },
++            overlay({ it.framePresentation }, { o, v -> o.copy(framePresentation = v) }),
++            prefsKey = "frame_presentation"),
+         field("autoWakeEnabled", "auto_wake", BoolKind, { it.autoWakeEnabled }, { s, v -> s.copy(autoWakeEnabled = v) },
+             prefsKey = "auto_wake_enabled"),
+         field("backgroundKeepAlive", "background_keep_alive", BoolKind, { it.backgroundKeepAlive },
+diff --git a/clients/android/app/src/test/kotlin/io/unom/punktfunk/PresetsTest.kt b/clients/android/app/src/test/kotlin/io/unom/punktfunk/PresetsTest.kt
+index 8415db540..accbca63b 100644
+--- a/clients/android/app/src/test/kotlin/io/unom/punktfunk/PresetsTest.kt
++++ b/clients/android/app/src/test/kotlin/io/unom/punktfunk/PresetsTest.kt
+@@ -197,7 +197,7 @@ class PresetsTest {
+             mouseMode = MouseMode.CAPTURE, invertScroll = true, overlayActions = "ring-blob",
+             gamepad = 6, gamepadForwarding = false, systemButtons = "local", guideGesture = "on",
+             statsVerbosity = StatsVerbosity.DETAILED, lowLatencyMode = false,
+-            presentPriority = "smooth", smoothBuffer = 2,
++            presentPriority = "smooth", smoothBuffer = 2, framePresentation = "arrival",
+         )
+         val p = newPreset("Everything").copy(overrides = all)
+         store.save(p)
+diff --git a/crates/pf-console-ui/src/screens/settings.rs b/crates/pf-console-ui/src/screens/settings.rs
+index ff42344d9..ecd31953f 100644
+--- a/crates/pf-console-ui/src/screens/settings.rs
++++ b/crates/pf-console-ui/src/screens/settings.rs
+@@ -100,6 +100,7 @@ pub enum RowId {
+     // so the typed struct stays shared; [`row_on`] keeps them off desktop.
+     /// Slice-progressive decode plus DSCP. Android-only.
+     LowLatency,
++    FramePresentation,
+     PhoneRumble,
+     PhoneGyro,
+     /// Raw BLE/USB capture instead of the OS pad.
+@@ -160,6 +161,7 @@ pub fn advanced(id: RowId) -> bool {
+             | RowId::Compositor
+             | RowId::Decoder
+             | RowId::LowLatency
++            | RowId::FramePresentation
+             | RowId::AudioFormat
+             | RowId::KeepHostAudio
+             | RowId::EchoCancel
+@@ -185,6 +187,8 @@ pub fn advanced(id: RowId) -> bool {
+ /// the Apple client reads the same keys from its own document.
+ mod device_keys {
+     pub const LOW_LATENCY: &str = "android.low_latency";
++    /// How hardware-decoded frames reach the panel: `auto`, `direct` or `arrival`.
++    pub const FRAME_PRESENTATION: &str = "android.frame_presentation";
+     pub const PHONE_RUMBLE: &str = "android.rumble_on_phone";
+     pub const PHONE_GYRO: &str = "android.gyro_on_phone";
+     pub const SC2: &str = "android.sc2_capture";
+@@ -217,6 +221,13 @@ const GAMEPAD_UI_MODE_KEY: &str = "gamepad_ui_mode";
+ const GAMEPAD_UI_MODES: [(&str, &str); 2] =
+     [("connected", "With a controller"), ("always", "Always")];
+ 
++/// Stored [`device_keys::FRAME_PRESENTATION`] values (`Settings.kt`'s `framePresentation`).
++const FRAME_PRESENTATIONS: [(&str, &str); 3] = [
++    ("auto", "Automatic"),
++    ("direct", "Direct"),
++    ("arrival", "Direct, on arrival"),
++];
++
+ /// Apple's `fullscreenAlways`: the Mac window opens fullscreen and stays so between streams.
+ /// Device-only, so no preset carries it.
+ const FULLSCREEN_ALWAYS_KEY: &str = "fullscreen_always";
+@@ -342,6 +353,11 @@ impl RowId {
+     fn extra(self) -> Option<Extra> {
+         Some(match self {
+             RowId::LowLatency => Extra::Bool(device_keys::LOW_LATENCY, true),
++            RowId::FramePresentation => Extra::Choice(
++                device_keys::FRAME_PRESENTATION,
++                "auto",
++                &FRAME_PRESENTATIONS,
++            ),
+             RowId::PhoneRumble => Extra::Bool(device_keys::PHONE_RUMBLE, false),
+             RowId::PhoneGyro => Extra::Bool(device_keys::PHONE_GYRO, false),
+             RowId::Sc2Passthrough => Extra::Bool(device_keys::SC2, true),
+@@ -452,6 +468,7 @@ const TABS: [(&str, &[RowId]); 7] = [
+             RowId::Compositor,
+             RowId::Decoder,
+             RowId::LowLatency,
++            RowId::FramePresentation,
+         ],
+     ),
+     (
+@@ -1423,7 +1440,7 @@ pub fn row_on(id: RowId, platform: crate::platform::Platform) -> bool {
+         // already hands a 1080p buffer, so there it is the cheaper backdrop alone.
+         RowId::ReduceUiResolution => &[Android, WebOS],
+         // A MediaCodec decoder flag; nothing else has the knob.
+-        RowId::LowLatency => &[Android],
++        RowId::LowLatency | RowId::FramePresentation => &[Android],
+         // The clients whose presenters place the picture through `video_fit`.
+         RowId::VideoFit => &[Desktop, Android, Apple],
+         // Offered wherever there is a second UI to fall back to: Android's touch home,
+@@ -1644,7 +1661,10 @@ fn row_icon(id: RowId) -> &'static str {
+         RowId::Compositor => "panel-right",
+         RowId::Codec => "film",
+         RowId::Hdr => "sun",
+-        RowId::PresentPriority | RowId::SmoothBuffer | RowId::LowLatency => "clock",
++        RowId::PresentPriority
++        | RowId::SmoothBuffer
++        | RowId::LowLatency
++        | RowId::FramePresentation => "clock",
+         RowId::Decoder | RowId::AudioRoute => "cpu",
+         RowId::Chroma444 | RowId::TenBitSdr => "eye",
+         RowId::Audio | RowId::AudioFormat | RowId::KeepHostAudio | RowId::PadSpeaker => "volume-2",
+@@ -2109,6 +2129,7 @@ fn row_spec_base(id: RowId, ctx: &Ctx, presets: &[(String, String)]) -> RowSpec
+         ),
+         RowId::AutoWake => (None, "Auto-wake on connect", on_off(s.auto_wake).into()),
+         RowId::LowLatency => (None, "Low-latency mode", extra()),
++        RowId::FramePresentation => (None, "Frame presentation", extra()),
+         RowId::PhoneRumble => (Some("This device"), "Rumble on this phone", extra()),
+         RowId::PhoneGyro => (None, "Gyro from this phone", extra()),
+         RowId::Sc2Passthrough => (None, "Steam Controller 2 passthrough", extra()),
+@@ -2396,6 +2417,11 @@ pub fn detail(id: RowId, ctx: &Ctx) -> &'static str {
+             "Feeds the decoder slice by slice as frames arrive and marks the media sockets \
+              for priority. Off if a decoder shows artefacts under it."
+         }
++        RowId::FramePresentation => {
++            "How decoded video reaches the screen (not PyroWave). Try Direct if motion \
++             judders when the game's frame rate is below the stream's; on arrival shows \
++             each frame the moment it is decoded."
++        }
+         RowId::PhoneRumble => {
+             "Also play controller 1's rumble on this phone's own motor — for a clip-on pad \
+              with no motor. Costs battery."
+@@ -2702,6 +2728,7 @@ pub fn adjust(id: RowId, delta: i32, wrap: bool, ctx: &mut Ctx) -> bool {
+         }),
+         RowId::AutoWake => toggle(&mut s.auto_wake, delta, wrap),
+         RowId::LowLatency
++        | RowId::FramePresentation
+         | RowId::PhoneRumble
+         | RowId::PhoneGyro
+         | RowId::Sc2Passthrough
+diff --git a/crates/pf-console-ui/src/screens/settings/tests.rs b/crates/pf-console-ui/src/screens/settings/tests.rs
+index f8cf6647a..db3773a25 100644
+--- a/crates/pf-console-ui/src/screens/settings/tests.rs
++++ b/crates/pf-console-ui/src/screens/settings/tests.rs
+@@ -1255,6 +1255,7 @@ fn platform_row_split_hides_only_the_other_platforms_concepts() {
+             RowId::GamepadUiMode,
+             RowId::ReduceUiResolution,
+             RowId::LowLatency,
++            RowId::FramePresentation,
+             RowId::AudioRoute,
+             RowId::CursorGestures,
+             RowId::Controllers,
+@@ -1486,7 +1487,7 @@ fn every_row_has_exactly_one_tab() {
+             seen.push(*id);
+         }
+     }
+-    assert_eq!(seen.len(), 65, "{seen:?}");
++    assert_eq!(seen.len(), 66, "{seen:?}");
+     assert!(
+         !seen.contains(&RowId::AdvancedChanged),
+         "built per tab, never listed"

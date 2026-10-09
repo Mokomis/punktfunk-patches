@@ -1,0 +1,45 @@
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
+index 4f4879f92..5ae32f0ca 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/WifiLinkLog.kt
+@@ -68,6 +68,9 @@ internal fun WifiManager.readLink(): WifiLink {
+  * on its own (a 320 MHz link also runs slower codings), so the answer comes from the peak over
+  * [WINDOW_MS].
+  *
++ * A peak that stays at or under [MAX_160_MBPS] does not name the cause: 160 MHz on two streams
++ * and 320 MHz on one report the same rates. The warning says only what the rate shows.
++ *
+  * The access point only widens the channel under load, so a quiet stream — a still desktop, a
+  * loading screen — shows a narrow rate on the best of links. Only seconds that carried at least
+  * [LOAD_MBPS] count toward the warning; without [SETTLE_LOADED] of them the line gives the rate
+@@ -92,7 +95,7 @@ internal class WifiHud {
+         val loaded = samples.count { it.third }
+         return when {
+             peak > MAX_160_MBPS -> HudLine(2, "wi-fi ↓ ${link.rxMbps} Mb/s · 320 MHz")
+-            loaded >= SETTLE_LOADED -> HudLine(3, "wi-fi ↓ ${link.rxMbps} Mb/s · no 320 MHz seen")
++            loaded >= SETTLE_LOADED -> HudLine(3, "wi-fi ↓ ${link.rxMbps} Mb/s · reduced: 1 stream or under 320 MHz")
+             else -> HudLine(2, "wi-fi ↓ ${link.rxMbps} Mb/s")
+         }
+     }
+@@ -103,7 +106,7 @@ internal class WifiHud {
+         const val WINDOW_MS = 60_000L
+         /** A second counts as loaded from this much received traffic. */
+         const val LOAD_MBPS = 300
+-        /** Loaded seconds, at one reading a second, before a missing 320 MHz rate is a warning. */
++        /** Loaded seconds, at one reading a second, before a rate short of two streams at 320 MHz is a warning. */
+         const val SETTLE_LOADED = 30
+     }
+ }
+diff --git a/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt b/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
+index dac8f3f6b..86c68dc31 100644
+--- a/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
++++ b/clients/android/app/src/test/kotlin/io/unom/punktfunk/WifiLinkLogTest.kt
+@@ -61,7 +61,7 @@ class WifiLinkLogTest {
+         assertEquals(2, line?.role)
+         line = hud.line(six, 29_000, 1_100)
+         assertEquals(3, line?.role)
+-        assertEquals("wi-fi ↓ 2161 Mb/s · no 320 MHz seen", line?.text)
++        assertEquals("wi-fi ↓ 2161 Mb/s · reduced: 1 stream or under 320 MHz", line?.text)
+         assertEquals(null, hud.line(six.copy(freqMhz = 0), 30_000, 1_100))
+     }
+ 
