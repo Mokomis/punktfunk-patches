@@ -34,7 +34,7 @@ On the default path the presenter's own counters looked correct: at about 101 fp
 
 - **Unit tests:** `./gradlew :app:testDebugUnitTest` passed, 205 tests, including the settings row, round-trip and catalogue checks.
 - **Install:** installed over `0.42.0-mokomis.6` with the same signing key.
-- **The setting from the app:** the user set it to **Direct, on arrival** in the settings screen. A stream with the setting chosen there (not through the debug properties) had not been observed when this was written. The code paths it selects are the ones in the table above.
+- **The setting from the app:** verified on October 9. With **Direct, on arrival** chosen in the settings screen and both debug properties unset, an HEVC session logged `decode: present backend = SurfaceView (frame presentation setting or sysprop)` and `decode: presenter = arrival`. That session showed the desktop, not a game, so the smooth result itself still rests on the debug-property runs in the table above.
 - **Reproducibility:** the eleven patches applied in order to a clean `v0.42.0` tree, and the result matched the built source with no differences outside the app-id files.
 
 ## Limits

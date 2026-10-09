@@ -5,6 +5,7 @@ Ideas not yet built, for the Windows PunktFunk host and for the Android client. 
 - [Host](#host)
 - [Client](#client)
 - [Tests waiting to be run](#tests-waiting-to-be-run)
+- [Looked at and ruled out](#looked-at-and-ruled-out)
 - [Background: Wi-Fi 7 width switching on the tablet](#background-wi-fi-7-width-switching-on-the-tablet)
 
 Evidence paths such as `logs/...` refer to the local tuning folder the measurements were taken in; those logs are not in this repository.
@@ -150,11 +151,10 @@ HEVC at 144 Hz with a 70–100 fps game juddered heavily on the client's default
 
 # Tests waiting to be run
 
-None of these needs new code. Each is one session with the tablet on USB.
+None of these needs new code. Each is one session with the tablet connected for debugging.
 
 | Test | What it answers | Setup |
 |---|---|---|
-| Frame presentation from the app | That the stored setting, not only the debug properties, gives the smooth result | HEVC, any game below the stream rate; check the log for `present backend = SurfaceView` and `presenter = arrival` |
 | Frame presentation at a matched rate | Whether Direct or on-arrival is any worse when the game holds the stream's rate | A steady 120 fps game on a 120 Hz stream, each of the three choices |
 | Lower GPU clock floor with the fragment path | Whether PyroWave still decodes smoothly below 1025 MHz, or at stock, and how much cooler it runs | PyroWave 4:2:0, timing option on (`debug.punktfunk.pyro_stats=1`), floor at stock, then steps up. One data point already: at stock, decode was 8.8 ms at 56% busy and looked smooth |
 | HEVC and AV1 against PyroWave | Picture quality by eye in fast foliage, delay, heat | Same scene, each codec at its highest bitrate. Note the HEVC low-latency decoder's 70 Mb/s ceiling |
@@ -162,6 +162,17 @@ None of these needs new code. Each is one session with the tablet on USB.
 | Host pipeline under load | Whether capture or encode is held up on the PC in a heavy scene | Host console, Performance, record a session |
 | Frame generation capture | Whether generated frames reach the tablet | A game with frame generation on, Steam's performance overlay visible in the stream, compared with the client's fps. The host's virtual display runs at the stream's refresh rate, so output above that rate cannot all arrive |
 | One-stream Wi-Fi drop | Whether the drop to one spatial stream seen during the 4:4:4 run is tied to heat | Firmware log running through a hot session and a cool-down |
+| Paused charging under load (low value: the user rarely plays plugged in) | Whether the tablet still runs from the charger alone during a stream, and what it saves in heat | Tablet on the charger, in a game. `echo 0 > /sys/class/oplus_chg/battery/mmi_charging_enable` for ten minutes, then `1` for ten; compare battery current and temperatures. At idle on October 9 pausing gave a true bypass (battery current 0 A, charger still attached) |
+
+# Looked at and ruled out
+
+Short entries so these are not investigated again from nothing. All on the OPPO Pad Mini, October 9, 2026.
+
+- **OPPO's video sharpening and super resolution (OSIE 2.0 / SR) for HEVC streams.** The post-processing stage exists only on the regular decoder (`c2.qti.hevc.decoder`), not on the low-latency one the client uses. On the regular decoder OPPO's per-app list (`sr-osie-whitelist-new`) is the gate: the debug properties `debug.oplus.osie.on` / `debug.oplus.sr.on` and the hidden setting `customize_multimedia_osie` changed nothing. Going further means a guessed feature code in the list, a reboot per attempt, a 2 ms slower decoder, and possibly no effect on HDR. Dropped.
+- **"Low-latency mode limits HEVC picture quality."** It does not. In the same game at about 137 fps the low-latency decoder carried 111–115 Mb/s and the regular one 115–117 Mb/s, although the low-latency decoder advertises a 70 Mb/s ceiling. The 62–78 Mb/s seen on October 8 was a 71–100 fps game: the host spends its bitrate per frame. The regular decoder was about 2 ms slower (decode 7.0 against 5.0 ms). Leave Low-latency mode on.
+- **HEVC above about 250 Mb/s.** Tried in one game at 144 Hz on the low-latency decoder. A 150 Mb/s target gave 111–115 Mb/s with decode at 5.0 ms; 200 gave 151–163 Mb/s at 5.7 ms, smooth; 500 gave 213–386 Mb/s at 7.7 ms, over the 6.9 ms a 144 Hz frame allows, with stutter, a 67 ms p95 and two quarter-second receive gaps (the Wi-Fi width-switching range). Decode time crosses the frame budget near 270 Mb/s of actual traffic. The client is left at a 200 Mb/s target.
+- **Undersized network receive buffers.** `rmem_max` is 16 MB, twice the level at which the client warns, and the client asks for 32 MB. Drop counters were zero after a reboot and no session has shown loss since; not measured across a PyroWave session.
+- **Hardware frame interpolation.** The tablet reports no Pixelworks display processor (`sys.pxlw.iris.support` is 0).
 
 # Background: Wi-Fi 7 width switching on the tablet
 
