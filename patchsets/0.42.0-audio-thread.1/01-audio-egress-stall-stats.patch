@@ -1,0 +1,695 @@
+diff --git a/crates/punktfunk-core/src/quic/endpoint.rs b/crates/punktfunk-core/src/quic/endpoint.rs
+index 8a93ff5a4..2793530de 100644
+--- a/crates/punktfunk-core/src/quic/endpoint.rs
++++ b/crates/punktfunk-core/src/quic/endpoint.rs
+@@ -18,6 +18,9 @@ use std::sync::{Arc, Mutex};
+ /// a lingering session; long enough that a wifi roam does not false-close.
+ pub const DEFAULT_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+ 
++/// Outgoing datagram queue of a connection, in bytes. A full queue drops its oldest datagram.
++pub const DATAGRAM_SEND_BUFFER: usize = 4 * 1024;
++
+ fn stream_transport() -> Arc<quinn::TransportConfig> {
+     stream_transport_idle(DEFAULT_IDLE_TIMEOUT)
+ }
+@@ -37,8 +40,8 @@ fn stream_transport_idle(idle: std::time::Duration) -> Arc<quinn::TransportConfi
+     // 4 KiB ≈ 200 ms of stereo Opus, ~14 ms of 48 kHz/24-bit PCM. Latest-wins
+     // under congestion; do not raise for PCM — TransportConfig is built before
+     // the plane is known, so a PCM-sized buffer would give Opus ~800 ms of lag.
+-    // Eviction is silent (`send_datagram` drop=true returns Ok); counters miss it.
+-    t.datagram_send_buffer_size(4 * 1024);
++    // Eviction is silent (drop=true returns Ok); the host's `audio egress` line counts it.
++    t.datagram_send_buffer_size(DATAGRAM_SEND_BUFFER);
+     // Probe to the sealed IPv4 video datagram (1472), not quinn's 1452: settle at
+     // the ceiling proves the path carries full-size video; settle below proves it
+     // cannot. Stock 1452 made a healthy path and a constrained one look the same.
+diff --git a/crates/punktfunk-host/src/native.rs b/crates/punktfunk-host/src/native.rs
+index c441dbe00..eb16d2eb5 100644
+--- a/crates/punktfunk-host/src/native.rs
++++ b/crates/punktfunk-host/src/native.rs
+@@ -51,6 +51,10 @@ pub(crate) use pairing::pair_ceremony;
+ 
+ mod audio;
+ use audio::audio_thread;
++/// What became of audio datagrams after `send_datagram` ([`egress_watch::EgressWatch`]).
++mod egress_watch;
++/// How late a runtime runs a timer and a woken task ([`rt_lag::RtLag`]).
++mod rt_lag;
+ 
+ /// Per-pad DualSense audio (0xD1 → `PAD_AUDIO_MAGIC`). The input thread spawns one
+ /// streamer per pad; Welcome advertises the cap via `pad_audio::host_cap`.
+@@ -1814,6 +1818,8 @@ pub(crate) async fn run_admitted(
+         let published = audio_sink.clone();
+         let muted = controls.muted.clone();
+         let counters = counters.clone();
++        // This task's runtime drives the connection; the audio thread reports its delays.
++        let rt_lag = rt_lag::RtLag::spawn(&tokio::runtime::Handle::current());
+         std::thread::Builder::new()
+             .name("punktfunk1-audio".into())
+             .spawn(move || {
+@@ -1830,6 +1836,7 @@ pub(crate) async fn run_admitted(
+                     tap_from,
+                     muted,
+                     counters,
++                    rt_lag,
+                 )
+             })
+             .map_err(|e| tracing::warn!(error = %e, "audio thread spawn failed — session continues without audio"))
+diff --git a/crates/punktfunk-host/src/native/audio.rs b/crates/punktfunk-host/src/native/audio.rs
+index 0bd72d336..f6716f72e 100644
+--- a/crates/punktfunk-host/src/native/audio.rs
++++ b/crates/punktfunk-host/src/native/audio.rs
+@@ -447,6 +447,8 @@ pub(super) fn audio_thread(
+     // Session totals for the summary. The per-window `SendStats` below keeps resetting; these
+     // do not, because the thread outlives the summary that wants them.
+     counters: Arc<crate::session_status::SessionCounters>,
++    // Probe on the runtime that drives `conn`. Pinged per send, read per stats line.
++    rt_lag: super::rt_lag::RtLag,
+ ) {
+     counters.note_audio_started();
+     use crate::audio::SAMPLE_RATE;
+@@ -570,6 +572,9 @@ pub(super) fn audio_thread(
+     let mut last_departure: Option<std::time::Instant> = None;
+     // Datagrams the wire refused. Counted: PCM has no PLC to hide a drop.
+     let mut oversized_drops: u64 = 0;
++    // What the connection does with a datagram after it accepts one. `SendStats` cannot see it.
++    let mut link_watch =
++        super::egress_watch::EgressWatch::new(punktfunk_core::quic::endpoint::DATAGRAM_SEND_BUFFER);
+     // The Opus plane's capture-rate warning fires at most once per session — the condition is
+     // re-tested a few hundred times a second, and it is a statement about the capturer, not an
+     // event.
+@@ -801,6 +806,9 @@ pub(super) fn audio_thread(
+                 }
+             };
+             let Some(d) = datagram else { continue };
++            // Before the send: what is still queued here is the previous frames' backlog.
++            link_watch.observe(now, conn.egress_sample());
++            rt_lag.ping();
+             // Four `SendDatagramError` outcomes; only `ConnectionLost` ends the session.
+             match conn.send_datagram(d) {
+                 super::link::DatagramSend::Sent => {
+@@ -854,6 +862,8 @@ pub(super) fn audio_thread(
+         if last_send_stats.elapsed() >= crate::audio::capture_policy::STATS_EVERY {
+             // Same window as the capture line so they read as a pair: holes at the tap
+             // with clean departures means the host delivered everything it had.
++            let link = link_watch.take();
++            let lag = rt_lag.take();
+             tracing::info!(
+                 sent = send_stats.sent,
+                 infilled = send_stats.infilled,
+@@ -864,6 +874,24 @@ pub(super) fn audio_thread(
+                 // Cumulative for the session (the rest of this line resets per window):
+                 // a total answers "did this ever happen". Zero on a healthy session.
+                 oversized_drops,
++                // After `send_datagram`: the queue, and stretches where it did not drain.
++                dgram_evicting = link.evicting_sends,
++                dgram_queue_max = link.queue_max,
++                tx_stalls = link.stalls,
++                tx_stall_max_ms = link.stall_max_ms,
++                tx_stall_cwnd = link.stall_cwnd,
++                tx_stall_udp = link.stall_udp_tx,
++                // Transport: a stall with a collapsed window or loss is its own doing.
++                cwnd = link.cwnd,
++                cwnd_min = link.cwnd_min,
++                rtt_ms = link.rtt_ms,
++                rtt_max_ms = link.rtt_max_ms,
++                lost = link.lost_packets,
++                cong_events = link.congestion_events,
++                // Runtime driving the connection: a stall with these high is starvation.
++                rt_timer_max_ms = lag.timer_max_ms,
++                rt_wake_max_ms = lag.wake_max_ms,
++                rt_late = lag.late,
+                 "audio egress"
+             );
+             // Keep this session's `frame_us`. `Default` would zero it, and every
+diff --git a/crates/punktfunk-host/src/native/egress_watch.rs b/crates/punktfunk-host/src/native/egress_watch.rs
+new file mode 100644
+index 000000000..2af07a1b4
+--- /dev/null
++++ b/crates/punktfunk-host/src/native/egress_watch.rs
+@@ -0,0 +1,327 @@
++//! What became of audio datagrams after `send_datagram` took them.
++//!
++//! `send_datagram` only queues. The connection's driver puts the queue on the wire, and may
++//! not: its task can be starved, or congestion control and pacing can hold it back. Either
++//! way the audio thread's own departures stay punctual while the wire goes quiet.
++//!
++//! [`EgressWatch`] reads the connection before each audio send, one frame apart. Datagrams
++//! still queued a frame later, with no DATAGRAM frame sent in between, are a stall. The
++//! window also keeps the congestion window, RTT and loss, and whether other packets left
++//! during the stall: those say the transport ran and chose to wait.
++
++use std::time::{Duration, Instant};
++
++/// A stall this long is counted, not only measured. Four Opus frames.
++const STALL: Duration = Duration::from_millis(20);
++
++/// One reading of the connection, taken before an audio send.
++#[derive(Clone, Copy, Debug)]
++pub(crate) struct LinkSample {
++    /// DATAGRAM frames the connection has sent since it opened: audio, cursor, rumble, HID.
++    pub(crate) dgram_tx: u64,
++    /// UDP datagrams it has sent, all traffic. Moves on an ACK alone.
++    pub(crate) udp_tx: u64,
++    /// Bytes of datagrams accepted and not yet sent.
++    pub(crate) queued: usize,
++    pub(crate) cwnd: u64,
++    pub(crate) rtt: Duration,
++    pub(crate) lost_packets: u64,
++    pub(crate) congestion_events: u64,
++}
++
++/// One reporting window. Counters reset with the window; `cwnd` and `rtt_ms` are its last reading.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub(crate) struct EgressWindow {
++    /// Sends that found the queue full. Each makes the connection drop its oldest datagram.
++    pub(crate) evicting_sends: u64,
++    /// Most bytes found waiting. Zero on a connection that sends each frame before the next.
++    pub(crate) queue_max: usize,
++    /// Stalls of at least [`STALL`].
++    pub(crate) stalls: u64,
++    /// Longest stretch with datagrams queued and none sent, ms.
++    pub(crate) stall_max_ms: u64,
++    /// Congestion window when the longest stall was last seen. Zero without a stall.
++    pub(crate) stall_cwnd: u64,
++    /// UDP datagrams the connection sent during that stall. Above zero, its driver was running.
++    pub(crate) stall_udp_tx: u64,
++    pub(crate) cwnd: u64,
++    pub(crate) cwnd_min: u64,
++    pub(crate) rtt_ms: u64,
++    pub(crate) rtt_max_ms: u64,
++    pub(crate) lost_packets: u64,
++    pub(crate) congestion_events: u64,
++}
++
++pub(crate) struct EgressWatch {
++    /// Queue size at which the next send evicts.
++    buffer: usize,
++    /// `dgram_tx` at the previous reading.
++    prev_dgram_tx: Option<u64>,
++    /// When datagrams were last seen moving, and `udp_tx` then.
++    moved: Option<(Instant, u64)>,
++    /// Loss and congestion totals at the window's start.
++    base: Option<(u64, u64)>,
++    /// The stall in progress has been counted.
++    counted: bool,
++    win: EgressWindow,
++}
++
++impl EgressWatch {
++    pub(crate) fn new(buffer: usize) -> EgressWatch {
++        EgressWatch {
++            buffer,
++            prev_dgram_tx: None,
++            moved: None,
++            base: None,
++            counted: false,
++            win: EgressWindow::default(),
++        }
++    }
++
++    /// Record the reading taken just before a send.
++    pub(crate) fn observe(&mut self, now: Instant, s: LinkSample) {
++        let w = &mut self.win;
++        if s.queued >= self.buffer {
++            w.evicting_sends += 1;
++        }
++        w.queue_max = w.queue_max.max(s.queued);
++        w.cwnd_min = if self.base.is_none() {
++            s.cwnd
++        } else {
++            w.cwnd_min.min(s.cwnd)
++        };
++        w.cwnd = s.cwnd;
++        w.rtt_ms = s.rtt.as_millis() as u64;
++        w.rtt_max_ms = w.rtt_max_ms.max(w.rtt_ms);
++        let (lost0, cong0) = *self
++            .base
++            .get_or_insert((s.lost_packets, s.congestion_events));
++        w.lost_packets = s.lost_packets.saturating_sub(lost0);
++        w.congestion_events = s.congestion_events.saturating_sub(cong0);
++
++        // Moving: a datagram left since the last reading, or none is waiting.
++        let held = s.queued > 0 && self.prev_dgram_tx == Some(s.dgram_tx);
++        self.prev_dgram_tx = Some(s.dgram_tx);
++        match self.moved {
++            Some((since, udp_then)) if held => {
++                let stalled = now.duration_since(since);
++                let ms = stalled.as_millis() as u64;
++                if ms >= w.stall_max_ms {
++                    w.stall_max_ms = ms;
++                    w.stall_cwnd = s.cwnd;
++                    w.stall_udp_tx = s.udp_tx.saturating_sub(udp_then);
++                }
++                if stalled >= STALL && !std::mem::replace(&mut self.counted, true) {
++                    w.stalls += 1;
++                }
++            }
++            _ => {
++                self.moved = Some((now, s.udp_tx));
++                self.counted = false;
++            }
++        }
++    }
++
++    /// Close the window. A stall in progress carries into the next one.
++    pub(crate) fn take(&mut self) -> EgressWindow {
++        self.base = None;
++        std::mem::take(&mut self.win)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const BUFFER: usize = 4096;
++    const MS: fn(u64) -> Duration = Duration::from_millis;
++
++    fn sample(dgram_tx: u64, queued: usize) -> LinkSample {
++        LinkSample {
++            dgram_tx,
++            udp_tx: dgram_tx,
++            queued,
++            cwnd: 12_000,
++            rtt: MS(3),
++            lost_packets: 0,
++            congestion_events: 0,
++        }
++    }
++
++    #[test]
++    fn a_connection_that_keeps_up_reports_nothing() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        for i in 0..200u64 {
++            w.observe(t0 + MS(5 * i), sample(i, 0));
++        }
++        let win = w.take();
++        assert_eq!((win.stalls, win.stall_max_ms, win.queue_max), (0, 0, 0));
++        assert_eq!((win.evicting_sends, win.stall_cwnd), (0, 0));
++        assert_eq!((win.cwnd, win.cwnd_min, win.rtt_ms), (12_000, 12_000, 3));
++    }
++
++    #[test]
++    fn a_quiet_wire_with_a_queue_is_one_stall_however_long() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(10, 0));
++        // 100 ms: the queue grows a frame at a time and nothing leaves.
++        for i in 1..=20u64 {
++            w.observe(t0 + MS(5 * i), sample(10, 110 * i as usize));
++        }
++        // The burst goes out.
++        w.observe(t0 + MS(105), sample(14, 0));
++        let win = w.take();
++        assert_eq!(win.stalls, 1);
++        assert_eq!(win.stall_max_ms, 100);
++        assert_eq!(win.queue_max, 2200);
++        assert_eq!((win.stall_cwnd, win.stall_udp_tx), (12_000, 0));
++        assert_eq!(win.evicting_sends, 0);
++    }
++
++    #[test]
++    fn packets_that_leave_during_a_stall_are_reported_with_it() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(10, 0));
++        // Datagrams held for 50 ms while three ACK-only packets go out.
++        for i in 1..=10u64 {
++            let mut s = sample(10, 110 * i as usize);
++            s.udp_tx = 10 + i.min(3);
++            w.observe(t0 + MS(5 * i), s);
++        }
++        let win = w.take();
++        assert_eq!((win.stalls, win.stall_max_ms, win.stall_udp_tx), (1, 50, 3));
++    }
++
++    #[test]
++    fn a_frame_that_waits_one_slot_is_measured_but_not_counted() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(1, 0));
++        w.observe(t0 + MS(5), sample(1, 110));
++        w.observe(t0 + MS(10), sample(3, 0));
++        let win = w.take();
++        assert_eq!((win.stalls, win.stall_max_ms, win.queue_max), (0, 5, 110));
++    }
++
++    #[test]
++    fn a_queue_that_drains_slowly_is_not_a_stall() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        for i in 0..40u64 {
++            w.observe(t0 + MS(5 * i), sample(i, 330));
++        }
++        let win = w.take();
++        assert_eq!((win.stalls, win.stall_max_ms, win.queue_max), (0, 0, 330));
++    }
++
++    #[test]
++    fn an_idle_stretch_without_readings_is_not_a_stall() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(5, 0));
++        // Ten silent seconds: no sends, so no readings. Nothing was waiting.
++        w.observe(t0 + MS(10_000), sample(5, 0));
++        assert_eq!(w.take().stall_max_ms, 0);
++    }
++
++    #[test]
++    fn a_full_queue_counts_each_send_that_evicts() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(1, 0));
++        w.observe(t0 + MS(5), sample(1, 4000));
++        w.observe(t0 + MS(10), sample(1, BUFFER));
++        w.observe(t0 + MS(15), sample(1, BUFFER));
++        let win = w.take();
++        assert_eq!(win.evicting_sends, 2);
++        assert_eq!(win.queue_max, BUFFER);
++    }
++
++    #[test]
++    fn loss_and_the_window_floor_are_per_window() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        let mut s = sample(1, 0);
++        (s.lost_packets, s.congestion_events) = (7, 2);
++        w.observe(t0, s);
++        (s.dgram_tx, s.cwnd, s.lost_packets, s.congestion_events) = (2, 6_000, 9, 3);
++        s.rtt = MS(40);
++        w.observe(t0 + MS(5), s);
++        (s.dgram_tx, s.cwnd, s.rtt) = (3, 9_000, MS(4));
++        w.observe(t0 + MS(10), s);
++        let win = w.take();
++        assert_eq!((win.lost_packets, win.congestion_events), (2, 1));
++        assert_eq!((win.cwnd, win.cwnd_min), (9_000, 6_000));
++        assert_eq!((win.rtt_ms, win.rtt_max_ms), (4, 40));
++
++        // The next window starts from the totals it first sees.
++        s.dgram_tx = 4;
++        w.observe(t0 + MS(15), s);
++        let win = w.take();
++        assert_eq!((win.lost_packets, win.congestion_events), (0, 0));
++        assert_eq!(win.cwnd_min, 9_000);
++    }
++
++    #[test]
++    fn a_stall_across_the_window_edge_is_counted_once() {
++        let t0 = Instant::now();
++        let mut w = EgressWatch::new(BUFFER);
++        w.observe(t0, sample(1, 0));
++        for i in 1..=6u64 {
++            w.observe(t0 + MS(5 * i), sample(1, 100));
++        }
++        let first = w.take();
++        assert_eq!((first.stalls, first.stall_max_ms), (1, 30));
++        w.observe(t0 + MS(35), sample(1, 100));
++        let second = w.take();
++        assert_eq!((second.stalls, second.stall_max_ms), (0, 35));
++    }
++
++    /// The readings against a real connection. On one thread the driver cannot run until
++    /// this task yields, so the queue fills, then evicts, and the client gets the remainder.
++    #[tokio::test]
++    async fn a_real_connection_reads_as_the_watch_expects() {
++        use punktfunk_core::quic::endpoint;
++        let server = endpoint::server("127.0.0.1:0".parse().unwrap()).unwrap();
++        let addr = server.local_addr().unwrap();
++        let accept = tokio::spawn(async move {
++            let conn = server.accept().await.expect("incoming").await.unwrap();
++            (server, conn)
++        });
++        let client = endpoint::client_insecure().unwrap();
++        let client_conn = client.connect(addr, "punktfunk").unwrap().await.unwrap();
++        let (_server, host_conn) = accept.await.unwrap();
++        let link = super::super::link::SessionLink::Quic(host_conn);
++        tokio::time::sleep(MS(100)).await;
++        let before = link.egress_sample();
++        assert_eq!(before.queued, 0);
++
++        // 60 × 100 B against a 4096 B queue: sends 41..59 each find it full and evict one.
++        let buffer = endpoint::DATAGRAM_SEND_BUFFER;
++        let mut w = EgressWatch::new(buffer);
++        let t0 = Instant::now();
++        for i in 0..60u64 {
++            w.observe(t0 + MS(5 * i), link.egress_sample());
++            assert!(link.send_datagram(vec![0u8; 100]).is_sent());
++        }
++        let held = link.egress_sample();
++        assert_eq!((held.queued, held.dgram_tx), (buffer, before.dgram_tx));
++        let win = w.take();
++        assert_eq!((win.evicting_sends, win.queue_max), (19, buffer));
++        assert_eq!((win.stalls, win.stall_max_ms), (1, 295));
++
++        let mut delivered = 0u64;
++        while let Ok(Ok(_)) = tokio::time::timeout(MS(500), client_conn.read_datagram()).await {
++            delivered += 1;
++        }
++        assert_eq!(delivered, 60 - win.evicting_sends);
++        let after = link.egress_sample();
++        assert_eq!(
++            (after.queued, after.dgram_tx - before.dgram_tx),
++            (0, delivered)
++        );
++    }
++}
+diff --git a/crates/punktfunk-host/src/native/link.rs b/crates/punktfunk-host/src/native/link.rs
+index adefa6eff..b923af621 100644
+--- a/crates/punktfunk-host/src/native/link.rs
++++ b/crates/punktfunk-host/src/native/link.rs
+@@ -123,6 +123,27 @@ impl SessionLink {
+         }
+     }
+ 
++    /// The connection as the audio sender finds it, read before a send. Two short locks.
++    pub(crate) fn egress_sample(&self) -> super::egress_watch::LinkSample {
++        let quic = self.quic();
++        let stats = quic.stats();
++        // Only the native plane's queue is sized by this host. A browser's reads as empty.
++        let queued = match self {
++            SessionLink::Quic(c) => punktfunk_core::quic::endpoint::DATAGRAM_SEND_BUFFER
++                .saturating_sub(c.datagram_send_buffer_space()),
++            SessionLink::Web(..) => 0,
++        };
++        super::egress_watch::LinkSample {
++            dgram_tx: stats.frame_tx.datagram,
++            udp_tx: stats.udp_tx.datagrams,
++            queued,
++            cwnd: stats.path.cwnd,
++            rtt: stats.path.rtt,
++            lost_packets: stats.path.lost_packets,
++            congestion_events: stats.path.congestion_events,
++        }
++    }
++
+     /// The next datagram from the peer — mic, rich input, pen. `Err` once the peer is gone.
+     pub(crate) async fn read_datagram(&self) -> Result<Vec<u8>, LinkClosed> {
+         match self {
+diff --git a/crates/punktfunk-host/src/native/rt_lag.rs b/crates/punktfunk-host/src/native/rt_lag.rs
+new file mode 100644
+index 000000000..90424cb77
+--- /dev/null
++++ b/crates/punktfunk-host/src/native/rt_lag.rs
+@@ -0,0 +1,200 @@
++//! How late an async runtime runs what it is asked to run.
++//!
++//! [`RtLag`] is one small task on the runtime being measured. It reports two delays, both of
++//! which a QUIC connection driver on that runtime suffers too:
++//!
++//! * timer: how long after its deadline a [`TICK`] sleep returns. The transport's own loss,
++//!   pacing and keep-alive timers wait the same way.
++//! * wake: how long a wake from another thread takes to reach the task. A `send_datagram`
++//!   from the audio thread wakes the driver the same way.
++//!
++//! Neither sees a task that is itself stuck behind another on a free runtime.
++//!
++//! Dropping the handle ends the task.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::Arc;
++use std::time::{Duration, Instant};
++
++/// Probe period. One Opus frame, so a reading exists for every audio datagram.
++const TICK: Duration = Duration::from_millis(5);
++
++/// A timer or wake this late is counted. Above the 15.6 ms default Windows timer period.
++const LATE: Duration = Duration::from_millis(20);
++
++/// One reporting window of [`RtLag`].
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub(crate) struct LagWindow {
++    pub(crate) timer_max_ms: u64,
++    pub(crate) wake_max_ms: u64,
++    /// Timer or wake delays of at least [`LATE`].
++    pub(crate) late: u64,
++}
++
++#[derive(Default)]
++struct Shared {
++    timer_max_us: AtomicU64,
++    wake_max_us: AtomicU64,
++    late: AtomicU64,
++    /// Nanoseconds since `epoch` of the oldest unanswered [`RtLag::ping`], plus one. Zero is none.
++    pinged: AtomicU64,
++    notify: tokio::sync::Notify,
++}
++
++impl Shared {
++    fn record(&self, max_us: &AtomicU64, delay: Duration) {
++        max_us.fetch_max(delay.as_micros() as u64, Ordering::Relaxed);
++        if delay >= LATE {
++            self.late.fetch_add(1, Ordering::Relaxed);
++        }
++    }
++}
++
++pub(crate) struct RtLag {
++    shared: Arc<Shared>,
++    epoch: Instant,
++    task: tokio::task::JoinHandle<()>,
++}
++
++impl RtLag {
++    /// Start measuring the runtime behind `rt`.
++    pub(crate) fn spawn(rt: &tokio::runtime::Handle) -> RtLag {
++        let shared = Arc::new(Shared::default());
++        let epoch = Instant::now();
++        let task = rt.spawn(probe(shared.clone(), epoch));
++        RtLag {
++            shared,
++            epoch,
++            task,
++        }
++    }
++
++    /// Wake the probe from the calling thread. An unanswered ping keeps its timestamp, so the
++    /// delay reported is the oldest one outstanding.
++    pub(crate) fn ping(&self) {
++        let stamp = self.epoch.elapsed().as_nanos() as u64 + 1;
++        let fresh = self
++            .shared
++            .pinged
++            .compare_exchange(0, stamp, Ordering::AcqRel, Ordering::Relaxed)
++            .is_ok();
++        if fresh {
++            self.shared.notify.notify_one();
++        }
++    }
++
++    /// Close the window.
++    pub(crate) fn take(&self) -> LagWindow {
++        let s = &self.shared;
++        LagWindow {
++            timer_max_ms: s.timer_max_us.swap(0, Ordering::Relaxed) / 1_000,
++            wake_max_ms: s.wake_max_us.swap(0, Ordering::Relaxed) / 1_000,
++            late: s.late.swap(0, Ordering::Relaxed),
++        }
++    }
++}
++
++impl Drop for RtLag {
++    fn drop(&mut self) {
++        self.task.abort();
++    }
++}
++
++async fn probe(shared: Arc<Shared>, epoch: Instant) {
++    let mut due = tokio::time::Instant::now() + TICK;
++    loop {
++        tokio::select! {
++            () = tokio::time::sleep_until(due) => {
++                let now = tokio::time::Instant::now();
++                shared.record(&shared.timer_max_us, now.saturating_duration_since(due));
++                // From now, not from `due`: a late tick must not be charged to the next one.
++                due = now + TICK;
++            }
++            () = shared.notify.notified() => {
++                let stamp = shared.pinged.swap(0, Ordering::AcqRel);
++                if stamp != 0 {
++                    let sent = Duration::from_nanos(stamp - 1);
++                    shared.record(&shared.wake_max_us, epoch.elapsed().saturating_sub(sent));
++                }
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const MS: fn(u64) -> Duration = Duration::from_millis;
++
++    /// A one-thread runtime driven from its own thread, like the probe's real hosts.
++    fn runtime() -> tokio::runtime::Runtime {
++        tokio::runtime::Builder::new_multi_thread()
++            .worker_threads(1)
++            .enable_all()
++            .build()
++            .unwrap()
++    }
++
++    #[test]
++    fn a_blocked_runtime_shows_in_both_delays() {
++        let rt = runtime();
++        let lag = RtLag::spawn(rt.handle());
++        std::thread::sleep(MS(30));
++        // The only worker blocks for 150 ms. The ping lands inside that.
++        let blocker = rt.spawn(async { std::thread::sleep(MS(150)) });
++        std::thread::sleep(MS(30));
++        lag.ping();
++        rt.block_on(blocker).unwrap();
++        std::thread::sleep(MS(30));
++        let win = lag.take();
++        assert!(win.timer_max_ms >= 100, "timer {win:?}");
++        assert!(win.wake_max_ms >= 60, "wake {win:?}");
++        assert!(win.late >= 2, "late {win:?}");
++    }
++
++    #[test]
++    fn an_idle_runtime_answers_pings_and_take_resets_the_window() {
++        let rt = runtime();
++        let lag = RtLag::spawn(rt.handle());
++        for _ in 0..20 {
++            lag.ping();
++            std::thread::sleep(MS(5));
++        }
++        // Loose: a loaded test machine may run this late, but not by the blocked case's margin.
++        let win = lag.take();
++        assert!(win.wake_max_ms < 100, "wake {win:?}");
++        assert!(win.timer_max_ms < 100, "timer {win:?}");
++        assert_eq!(lag.shared.pinged.load(Ordering::Acquire), 0);
++        std::thread::sleep(MS(20));
++        assert!(lag.take().timer_max_ms < 100);
++    }
++
++    #[test]
++    fn an_unanswered_ping_keeps_the_oldest_timestamp() {
++        let rt = runtime();
++        let lag = RtLag::spawn(rt.handle());
++        std::thread::sleep(MS(20));
++        let blocker = rt.spawn(async { std::thread::sleep(MS(120)) });
++        std::thread::sleep(MS(20));
++        lag.ping();
++        let first = lag.shared.pinged.load(Ordering::Acquire);
++        std::thread::sleep(MS(40));
++        lag.ping();
++        assert_eq!(lag.shared.pinged.load(Ordering::Acquire), first);
++        rt.block_on(blocker).unwrap();
++        std::thread::sleep(MS(30));
++        assert!(lag.take().wake_max_ms >= 60);
++    }
++
++    #[test]
++    fn dropping_the_handle_ends_the_probe() {
++        let rt = runtime();
++        let lag = RtLag::spawn(rt.handle());
++        let shared = lag.shared.clone();
++        drop(lag);
++        std::thread::sleep(MS(50));
++        // Only this test's clone is left once the aborted task has dropped its own.
++        assert_eq!(Arc::strong_count(&shared), 1);
++    }
++}

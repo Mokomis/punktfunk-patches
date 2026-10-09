@@ -1,0 +1,14 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "base_tag": "v0.42.0",
+  "base_commit": "8f046f239f3d6dcfc1fa0a25343be926a233a5a5",
+  "applies_after": "patchsets/0.42.0-reconnect-fix.3/reconnect-fix.patch",
+  "build_version": "0.42.0+audio-thread.1",
+  "target": "x86_64-pc-windows-msvc",
+  "patches": [
+    "01-audio-egress-stall-stats.patch",
+    "02-quic-own-runtime.patch"
+  ],
+  "binary_sha256": null,
+  "status": "compiled and unit-tested; not installed, not tested against the symptom"
+}

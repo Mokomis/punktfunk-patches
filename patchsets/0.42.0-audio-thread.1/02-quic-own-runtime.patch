@@ -1,0 +1,353 @@
+diff --git a/crates/punktfunk-host/src/native.rs b/crates/punktfunk-host/src/native.rs
+index eb16d2eb5..23d1e7838 100644
+--- a/crates/punktfunk-host/src/native.rs
++++ b/crates/punktfunk-host/src/native.rs
+@@ -53,6 +53,8 @@ mod audio;
+ use audio::audio_thread;
+ /// What became of audio datagrams after `send_datagram` ([`egress_watch::EgressWatch`]).
+ mod egress_watch;
++/// The QUIC endpoint's own one-thread runtime ([`quic_rt::QuicRuntime`]).
++mod quic_rt;
+ /// How late a runtime runs a timer and a woken task ([`rt_lag::RtLag`]).
+ mod rt_lag;
+ 
+@@ -320,13 +322,18 @@ pub(crate) async fn serve(
+ ) -> Result<()> {
+     let fingerprint = endpoint::fingerprint_of_pem(&identity.cert_pem)
+         .map_err(|e| anyhow!("cert fingerprint: {e}"))?;
+-    let ep = endpoint::server_with_identity_idle(
+-        ([0, 0, 0, 0], opts.port).into(),
+-        &identity.cert_pem,
+-        &identity.key_pem,
+-        opts.idle_timeout.unwrap_or(endpoint::DEFAULT_IDLE_TIMEOUT),
+-    )
+-    .map_err(|e| anyhow!("QUIC server endpoint: {e}"))?;
++    // Declared before `ep`, so it outlives the endpoint and the `wait_idle` at the end.
++    let quic_runtime = quic_rt::QuicRuntime::start()?;
++    let ep = quic_runtime
++        .enter(|| {
++            endpoint::server_with_identity_idle(
++                ([0, 0, 0, 0], opts.port).into(),
++                &identity.cert_pem,
++                &identity.key_pem,
++                opts.idle_timeout.unwrap_or(endpoint::DEFAULT_IDLE_TIMEOUT),
++            )
++        })
++        .map_err(|e| anyhow!("QUIC server endpoint: {e}"))?;
+     tracing::info!(
+         port = opts.port,
+         source = ?opts.source,
+@@ -424,6 +431,8 @@ pub(crate) async fn serve(
+             mic_tx: mic_service.sender(),
+             np: np.clone(),
+             stats: stats.clone(),
++            // The browser plane builds its own endpoint, on the serving runtime.
++            quic_rt: None,
+         };
+         let (bind, sem) = (plane.bind, sem.clone());
+         tokio::spawn(async move {
+@@ -473,11 +482,16 @@ pub(crate) async fn serve(
+         let sem = sem.clone();
+         let accepted = accepted.clone();
+         let done = done.clone();
++        let quic = quic_runtime.handle().clone();
+         sessions.spawn(async move {
+             // Handshake off the accept loop: a peer that stalls it holds only its own task, not
+             // every other client, up to the idle timeout. A pin mismatch still ends here, before
+-            // a session slot is taken.
+-            let conn = match incoming.await {
++            // a session slot is taken. The connection's driver goes to the QUIC runtime.
++            let conn = match quic_rt::accept(&quic, incoming) {
++                Ok(connecting) => connecting.await,
++                Err(e) => Err(e),
++            };
++            let conn = match conn {
+                 Ok(c) => c,
+                 Err(e) => {
+                     tracing::warn!(error = %e, "QUIC accept failed");
+@@ -513,6 +527,7 @@ pub(crate) async fn serve(
+                 stats,
+                 permit,
+                 sem_session,
++                quic,
+             )
+             .await
+             {
+@@ -1196,6 +1211,8 @@ async fn serve_session(
+     // Owned here: an unpaired knock releases it while parked and re-acquires on approval.
+     mut permit: tokio::sync::OwnedSemaphorePermit,
+     sem: Arc<tokio::sync::Semaphore>,
++    // The runtime that drives `conn`.
++    quic: tokio::runtime::Handle,
+ ) -> Result<Served> {
+     let np: &NativePairing = np_arc;
+     let peer = conn.remote_address();
+@@ -1340,6 +1357,7 @@ async fn serve_session(
+         mic_tx,
+         np: np_arc.clone(),
+         stats,
++        quic_rt: Some(quic),
+     };
+     run_admitted(conn, send, recv, first, &host, DataPlane::Udp, permit).await
+ }
+@@ -1355,6 +1373,8 @@ pub(crate) struct SessionHost {
+     pub(crate) mic_tx: std::sync::mpsc::SyncSender<crate::audio::MicFrame>,
+     pub(crate) np: Arc<NativePairing>,
+     pub(crate) stats: Arc<StatsRecorder>,
++    /// The runtime driving this session's connection when it is not the serving one.
++    pub(crate) quic_rt: Option<tokio::runtime::Handle>,
+ }
+ 
+ impl SessionHost {
+@@ -1383,6 +1403,7 @@ impl SessionHost {
+             mic_tx: std::sync::mpsc::sync_channel(1).0,
+             np,
+             stats: StatsRecorder::new(crate::stats_recorder::default_dir()),
++            quic_rt: None,
+         }
+     }
+ }
+@@ -1420,6 +1441,7 @@ pub(crate) async fn run_admitted(
+         mic_tx,
+         np,
+         stats,
++        quic_rt,
+     } = host;
+     let (opts, np, stats) = (opts.as_ref(), np.as_ref(), stats.clone());
+     let (inj_tx, mic_tx) = (inj_tx.clone(), mic_tx.clone());
+@@ -1818,8 +1840,11 @@ pub(crate) async fn run_admitted(
+         let published = audio_sink.clone();
+         let muted = controls.muted.clone();
+         let counters = counters.clone();
+-        // This task's runtime drives the connection; the audio thread reports its delays.
+-        let rt_lag = rt_lag::RtLag::spawn(&tokio::runtime::Handle::current());
++        // The audio thread reports both runtimes' delays: this task's, which runs the session,
++        // and the one driving the connection. A browser's are the same runtime.
++        let serving = tokio::runtime::Handle::current();
++        let rt_lag = rt_lag::RtLag::spawn(&serving);
++        let quic_lag = rt_lag::RtLag::spawn(quic_rt.as_ref().unwrap_or(&serving));
+         std::thread::Builder::new()
+             .name("punktfunk1-audio".into())
+             .spawn(move || {
+@@ -1837,6 +1862,7 @@ pub(crate) async fn run_admitted(
+                     muted,
+                     counters,
+                     rt_lag,
++                    quic_lag,
+                 )
+             })
+             .map_err(|e| tracing::warn!(error = %e, "audio thread spawn failed — session continues without audio"))
+diff --git a/crates/punktfunk-host/src/native/audio.rs b/crates/punktfunk-host/src/native/audio.rs
+index f6716f72e..ca686feda 100644
+--- a/crates/punktfunk-host/src/native/audio.rs
++++ b/crates/punktfunk-host/src/native/audio.rs
+@@ -447,8 +447,10 @@ pub(super) fn audio_thread(
+     // Session totals for the summary. The per-window `SendStats` below keeps resetting; these
+     // do not, because the thread outlives the summary that wants them.
+     counters: Arc<crate::session_status::SessionCounters>,
+-    // Probe on the runtime that drives `conn`. Pinged per send, read per stats line.
++    // Probes on the runtime that runs the session and on the one that drives `conn`.
++    // Pinged per send, read per stats line.
+     rt_lag: super::rt_lag::RtLag,
++    quic_lag: super::rt_lag::RtLag,
+ ) {
+     counters.note_audio_started();
+     use crate::audio::SAMPLE_RATE;
+@@ -809,6 +811,7 @@ pub(super) fn audio_thread(
+             // Before the send: what is still queued here is the previous frames' backlog.
+             link_watch.observe(now, conn.egress_sample());
+             rt_lag.ping();
++            quic_lag.ping();
+             // Four `SendDatagramError` outcomes; only `ConnectionLost` ends the session.
+             match conn.send_datagram(d) {
+                 super::link::DatagramSend::Sent => {
+@@ -864,6 +867,7 @@ pub(super) fn audio_thread(
+             // with clean departures means the host delivered everything it had.
+             let link = link_watch.take();
+             let lag = rt_lag.take();
++            let quic = quic_lag.take();
+             tracing::info!(
+                 sent = send_stats.sent,
+                 infilled = send_stats.infilled,
+@@ -889,6 +893,10 @@ pub(super) fn audio_thread(
+                 lost = link.lost_packets,
+                 cong_events = link.congestion_events,
+                 // Runtime driving the connection: a stall with these high is starvation.
++                quic_timer_max_ms = quic.timer_max_ms,
++                quic_wake_max_ms = quic.wake_max_ms,
++                quic_late = quic.late,
++                // Runtime running the session. High here alone no longer reaches the wire.
+                 rt_timer_max_ms = lag.timer_max_ms,
+                 rt_wake_max_ms = lag.wake_max_ms,
+                 rt_late = lag.late,
+diff --git a/crates/punktfunk-host/src/native/quic_rt.rs b/crates/punktfunk-host/src/native/quic_rt.rs
+new file mode 100644
+index 000000000..7d0466bb8
+--- /dev/null
++++ b/crates/punktfunk-host/src/native/quic_rt.rs
+@@ -0,0 +1,165 @@
++//! The QUIC endpoint's own runtime.
++//!
++//! quinn spawns the endpoint driver on the runtime that is current when the endpoint is built,
++//! and each connection driver on the one that is current when the connection is accepted. The
++//! socket and the transport's timers register the same way. [`QuicRuntime`] is one worker
++//! thread that runs only those tasks, so session code holding a worker of the serving runtime
++//! cannot delay a datagram or an ACK.
++//!
++//! Nothing else moves. A `quinn::Connection` is a handle: streams and datagrams are used from
++//! the serving runtime and from plain threads, and their wakers cross runtimes.
++
++use anyhow::{Context, Result};
++
++/// Name of the worker thread, as a debugger or a thread list shows it.
++const THREAD_NAME: &str = "punktfunk1-quic";
++
++pub(crate) struct QuicRuntime {
++    /// `Some` until drop.
++    rt: Option<tokio::runtime::Runtime>,
++}
++
++impl QuicRuntime {
++    pub(crate) fn start() -> Result<QuicRuntime> {
++        let rt = tokio::runtime::Builder::new_multi_thread()
++            .worker_threads(1)
++            .thread_name(THREAD_NAME)
++            .enable_all()
++            .build()
++            .context("QUIC runtime")?;
++        tracing::info!(thread = THREAD_NAME, "QUIC endpoint runs on its own runtime");
++        Ok(QuicRuntime { rt: Some(rt) })
++    }
++
++    pub(crate) fn handle(&self) -> &tokio::runtime::Handle {
++        self.rt
++            .as_ref()
++            .expect("the QUIC runtime lives until drop")
++            .handle()
++    }
++
++    /// Build an endpoint with this runtime current, so its driver and socket belong here.
++    pub(crate) fn enter<T>(&self, build: impl FnOnce() -> T) -> T {
++        let _on_quic = self.handle().enter();
++        build()
++    }
++}
++
++impl Drop for QuicRuntime {
++    /// Not a plain drop: that blocks on the worker, which panics inside an async context.
++    fn drop(&mut self) {
++        if let Some(rt) = self.rt.take() {
++            rt.shutdown_background();
++        }
++    }
++}
++
++/// Accept `incoming` with `quic` current, so the connection's driver is spawned there. The
++/// returned handshake is awaited by the caller, on its own runtime.
++pub(crate) fn accept(
++    quic: &tokio::runtime::Handle,
++    incoming: quinn::Incoming,
++) -> Result<quinn::Connecting, quinn::ConnectionError> {
++    let _on_quic = quic.enter();
++    incoming.accept()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use punktfunk_core::quic::endpoint;
++    use std::time::{Duration, Instant};
++
++    /// How long the serving runtime's only thread is held.
++    const BLOCK: Duration = Duration::from_millis(400);
++
++    /// Send one datagram to a loopback client, then block the serving runtime. Returns how
++    /// long the datagram took to arrive.
++    fn datagram_delay_while_serving_blocks(dedicated: bool) -> Duration {
++        let serving = tokio::runtime::Builder::new_current_thread()
++            .enable_all()
++            .build()
++            .unwrap();
++        let client_rt = tokio::runtime::Builder::new_multi_thread()
++            .worker_threads(1)
++            .enable_all()
++            .build()
++            .unwrap();
++        let quic = QuicRuntime::start().unwrap();
++        let bind = || endpoint::server("127.0.0.1:0".parse().unwrap()).unwrap();
++        let server = if dedicated {
++            quic.enter(bind)
++        } else {
++            let _on_serving = serving.enter();
++            bind()
++        };
++        let addr = server.local_addr().unwrap();
++        let client = client_rt.spawn(async move {
++            let ep = endpoint::client_insecure().unwrap();
++            let conn = ep.connect(addr, "punktfunk").unwrap().await.unwrap();
++            conn.read_datagram().await.unwrap();
++            // The connection must outlive the read, or the host sees a close instead.
++            (Instant::now(), ep, conn)
++        });
++        let quic = quic.handle().clone();
++        serving.block_on(async move {
++            let incoming = server.accept().await.expect("incoming");
++            let conn = if dedicated {
++                accept(&quic, incoming).unwrap().await.unwrap()
++            } else {
++                incoming.await.unwrap()
++            };
++            // Let the handshake's last flight settle, so only the datagram is in question.
++            tokio::time::sleep(Duration::from_millis(100)).await;
++            let sent = Instant::now();
++            conn.send_datagram(b"audio".to_vec().into()).unwrap();
++            std::thread::sleep(BLOCK);
++            let (arrived, _ep, _conn) = client.await.unwrap();
++            arrived.duration_since(sent)
++        })
++    }
++
++    #[test]
++    fn a_blocked_serving_runtime_does_not_delay_a_datagram() {
++        let delay = datagram_delay_while_serving_blocks(true);
++        assert!(delay < BLOCK / 2, "datagram took {delay:?}");
++    }
++
++    /// The control: without the dedicated runtime the same datagram waits out the block.
++    #[test]
++    fn an_endpoint_on_the_serving_runtime_waits_for_it() {
++        let delay = datagram_delay_while_serving_blocks(false);
++        assert!(
++            delay >= BLOCK - Duration::from_millis(50),
++            "datagram took {delay:?}"
++        );
++    }
++
++    #[test]
++    fn tasks_run_on_the_named_thread() {
++        let quic = QuicRuntime::start().unwrap();
++        let name = quic
++            .handle()
++            .spawn(async { std::thread::current().name().map(str::to_owned) });
++        let serving = tokio::runtime::Builder::new_current_thread()
++            .build()
++            .unwrap();
++        assert_eq!(
++            serving.block_on(name).unwrap().as_deref(),
++            Some(THREAD_NAME)
++        );
++    }
++
++    #[test]
++    fn it_drops_inside_an_async_context() {
++        let serving = tokio::runtime::Builder::new_current_thread()
++            .build()
++            .unwrap();
++        serving.block_on(async {
++            let quic = QuicRuntime::start().unwrap();
++            let ran = quic.handle().spawn(async { 7 }).await.unwrap();
++            assert_eq!(ran, 7);
++            drop(quic);
++        });
++    }
++}
