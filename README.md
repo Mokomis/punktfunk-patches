@@ -20,7 +20,8 @@ All build the Android client under the application id `io.unom.punktfunk.mokomis
 
 | Patchset | Base | Use with |
 |---|---|---|
-| [`patchsets/0.42.0-mokomis.8`](patchsets/0.42.0-mokomis.8) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. **Current.** Shows Frame presentation in the controller interface, lets presets carry it, and adds per-title presets to the touch library. |
+| [`patchsets/0.43.1-mokomis.2`](patchsets/0.43.1-mokomis.2) | v0.43.1, `a75ca9f7a09c` | A 0.42.0 or 0.43 host. **Current.** The full `0.42.0-mokomis.8` series ported to 0.43.1. Streams against a 0.42.0 host; not yet run against a 0.43.1 one. |
+| [`patchsets/0.42.0-mokomis.8`](patchsets/0.42.0-mokomis.8) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Shows Frame presentation in the controller interface, lets presets carry it, and adds per-title presets to the touch library. |
 | [`patchsets/0.42.0-mokomis.7`](patchsets/0.42.0-mokomis.7) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds a Frame presentation setting that removes heavy judder on hardware-decoded (HEVC/AV1) streams on this tablet. |
 | [`patchsets/0.42.0-mokomis.6`](patchsets/0.42.0-mokomis.6) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds an off-by-default GPU step-timing readout and corrects the overlay's Wi-Fi warning wording. |
 | [`patchsets/0.42.0-mokomis.5`](patchsets/0.42.0-mokomis.5) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Runs the PyroWave inverse wavelet on the fragment path where the codec prefers it; about a quarter less GPU load on the Adreno 829 in one measurement. |

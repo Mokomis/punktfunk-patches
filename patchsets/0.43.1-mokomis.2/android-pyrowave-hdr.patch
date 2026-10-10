@@ -1,0 +1,227 @@
+diff --git a/clients/android/native/src/pyro/device.rs b/clients/android/native/src/pyro/device.rs
+index b9fa37cd2..84465d987 100644
+--- a/clients/android/native/src/pyro/device.rs
++++ b/clients/android/native/src/pyro/device.rs
+@@ -18,8 +18,7 @@ use std::ffi::CString;
+ 
+ /// Instance extensions, in creation order. `VulkanDecodeDevice::instance_extensions` must
+ /// list exactly these — pyrowave replays them and a mismatch is a wrong answer, not an error.
+-const INSTANCE_EXTS: [&std::ffi::CStr; 2] =
+-    [ash::khr::surface::NAME, ash::khr::android_surface::NAME];
++const INSTANCE_EXTS: [&std::ffi::CStr; 3] = [ash::khr::surface::NAME, ash::khr::android_surface::NAME, ash::ext::swapchain_colorspace::NAME];
+ 
+ /// Device extensions, same contract. Only the swapchain: decode and CSC are core 1.3.
+ const DEVICE_EXTS: [&std::ffi::CStr; 1] = [ash::khr::swapchain::NAME];
+@@ -51,6 +50,7 @@ pub(super) struct PyroDevice {
+     pub(super) pdev: vk::PhysicalDevice,
+     pub(super) queue: vk::Queue,
+     pub(super) qf: u32,
++    pub(super) hdr_metadata: bool,
+     /// The handoff the shared PyroWave decoder is built from.
+     pub(super) vkd: VulkanDecodeDevice,
+     /// The surface every swapchain is built on, outliving the device as Vulkan requires.
+@@ -131,7 +131,7 @@ fn create_instance(entry: &ash::Entry, with_surface: bool) -> Result<ash::Instan
+ /// bare instance — no surface, no logical device, no GPU work — so it is safe to call
+ /// before a session exists.
+ pub(crate) fn pyrowave_capable() -> bool {
+-    // SAFETY: dlopens libvulkan.so and reads its entry points. `Entry` owns the handle.
++    // SAFETY: the system Vulkan loader remains owned by Entry.
+     let entry = match unsafe { ash::Entry::load() } {
+         Ok(e) => e,
+         Err(e) => {
+@@ -208,8 +208,12 @@ impl PyroDevice {
+         let queue_ci = [vk::DeviceQueueCreateInfo::default()
+             .queue_family_index(qf)
+             .queue_priorities(&prio)];
+-        let ext_ptrs: Vec<*const std::ffi::c_char> =
+-            DEVICE_EXTS.iter().map(|n| n.as_ptr()).collect();
++        // SAFETY: the instance owns the physical device during enumeration.
++        let available = unsafe { instance.enumerate_device_extension_properties(pdev) }?;
++        let hdr_metadata = available.iter().any(|e| e.extension_name_as_c_str().ok() == Some(ash::ext::hdr_metadata::NAME));
++        let mut extensions = DEVICE_EXTS.to_vec();
++        if hdr_metadata { extensions.push(ash::ext::hdr_metadata::NAME); }
++        let ext_ptrs: Vec<*const std::ffi::c_char> = extensions.iter().map(|n| n.as_ptr()).collect();
+         // Exactly the probe's conjuncts, enabled. `shader_float16` rides along when the
+         // driver has it: pyrowave picks a half-precision kernel path off it, and reporting
+         // it enabled when it is not would make the codec choose a path the device refuses.
+@@ -285,6 +289,7 @@ impl PyroDevice {
+             queue_lock: std::sync::Arc::new(QueueLock::new()),
+         };
+         Ok(PyroDevice {
++            hdr_metadata,
+             device,
+             pdev,
+             queue,
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index 2a18c405b..fa79107e6 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -119,7 +119,8 @@ mod imp {
+         let dev = PyroDevice::new(PyroDevice::open_surface(window)?)?;
+         stats.set_decoder(&decoder_label(&dev.vkd.device_name), false);
+         let smooth = opts.present_priority == 1;
+-        let mut present = Present::new(&dev, smooth)?;
++        let want_hdr = client.color.transfer == 16 && client.bit_depth >= 10;
++        let mut present = Present::new(&dev, smooth, want_hdr)?;
+ 
+         let mut mode = client.mode();
+         let mut decoder = open_decoder(client, &dev, mode)?;
+@@ -151,6 +152,16 @@ mod imp {
+         let mut warned_silent = false;
+ 
+         while !shutdown.load(Ordering::Relaxed) {
++            // Metadata is best-effort and latest-wins. Drain without delaying video; the host
++            // repeats it on keyframes, so a lost datagram repairs itself.
++            let mut mastering = None;
++            while let Ok(meta) = client.next_hdr_meta(Duration::ZERO) {
++                mastering = Some(meta);
++            }
++            if let Some(meta) = mastering {
++                present.set_hdr_metadata(meta);
++            }
++
+             // Live mode switch (`NativeClient::request_mode`, or the host's own resize): the
+             // decoder is fixed-size, so rebuild it. The device, surface and pipeline are all
+             // dimension-independent and stay; the swapchain follows the window, not the
+diff --git a/clients/android/native/src/pyro/present.rs b/clients/android/native/src/pyro/present.rs
+index b0279aedb..abdad6e2e 100644
+--- a/clients/android/native/src/pyro/present.rs
++++ b/clients/android/native/src/pyro/present.rs
+@@ -56,6 +56,10 @@ pub(super) struct Present<'d> {
+     swap_d: ash::khr::swapchain::Device,
+     pdev: vk::PhysicalDevice,
+     format: vk::Format,
++    color_space: vk::ColorSpaceKHR,
++    hdr_output: bool,
++    hdr_metadata: Option<ash::ext::hdr_metadata::Device>,
++    mastering: Option<punktfunk_core::quic::HdrMeta>,
+     present_mode: vk::PresentModeKHR,
+     render_pass: vk::RenderPass,
+     sampler: vk::Sampler,
+@@ -80,25 +84,24 @@ impl<'d> Present<'d> {
+     /// backends take from the settings, expressed in the only actuator a swapchain has.
+     /// MAILBOX shows the newest picture and discards what it overtook — the latency intent
+     /// — where FIFO queues every one onto the panel's own cadence.
+-    pub(super) fn new(dev: &'d super::device::PyroDevice, smooth: bool) -> Result<Present<'d>> {
++    pub(super) fn new(dev: &'d super::device::PyroDevice, smooth: bool, want_hdr: bool) -> Result<Present<'d>> {
+         let surface = dev.base.surface;
+         let surface_i = ash::khr::surface::Instance::new(&dev.base.entry, &dev.base.instance);
+         let swap_d = ash::khr::swapchain::Device::new(&dev.base.instance, &dev.device);
+         // SAFETY: physical device and surface are live for the lane's lifetime.
+         let formats = unsafe { surface_i.get_physical_device_surface_formats(dev.pdev, surface) }?;
+-        // Whatever the compositor offers first in 8-bit UNORM; the CSC writes non-linear
+-        // sRGB values, so an _SRGB swapchain format would apply the transfer twice.
+-        let format = formats
+-            .iter()
+-            .find(|f| {
+-                matches!(
+-                    f.format,
+-                    vk::Format::R8G8B8A8_UNORM | vk::Format::B8G8R8A8_UNORM
+-                )
+-            })
+-            .or_else(|| formats.first())
+-            .ok_or_else(|| anyhow!("surface offers no formats"))?;
++        let hdr_format = want_hdr.then(|| formats.iter().find(|f| {
++            f.color_space == vk::ColorSpaceKHR::HDR10_ST2084_EXT && matches!(f.format,
++                vk::Format::A2B10G10R10_UNORM_PACK32 | vk::Format::A2R10G10B10_UNORM_PACK32)
++        })).flatten();
++        // PQ passes through an HDR10 surface; SDR uses UNORM to avoid a second transfer.
++        let format = hdr_format.or_else(|| formats.iter().find(|f| {
++            f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR && matches!(f.format,
++                vk::Format::R8G8B8A8_UNORM | vk::Format::B8G8R8A8_UNORM)
++        })).ok_or_else(|| anyhow!("surface offers no supported color format"))?;
+         let (format, color_space) = (format.format, format.color_space);
++        let hdr_output = hdr_format.is_some();
++        if want_hdr && !hdr_output { log::warn!("pyro: HDR10 surface unavailable; tone-mapping to SDR"); }
+         // SAFETY: as above.
+         let modes =
+             unsafe { surface_i.get_physical_device_surface_present_modes(dev.pdev, surface) }?;
+@@ -181,6 +184,12 @@ impl<'d> Present<'d> {
+             swap_d,
+             pdev: dev.pdev,
+             format,
++            color_space,
++            hdr_output,
++            hdr_metadata: dev
++                .hdr_metadata
++                .then(|| ash::ext::hdr_metadata::Device::new(&dev.base.instance, &dev.device)),
++            mastering: None,
+             present_mode,
+             render_pass,
+             sampler,
+@@ -205,10 +214,11 @@ impl<'d> Present<'d> {
+         };
+         p.rebuild_swapchain(color_space)?;
+         log::info!(
+-            "pyro: swapchain {}x{} {:?} {:?}",
++            "pyro: swapchain {}x{} {:?} {:?} {:?}",
+             p.swap.extent.width,
+             p.swap.extent.height,
+             p.format,
++            p.color_space,
+             p.present_mode
+         );
+         Ok(p)
+@@ -465,9 +475,12 @@ impl<'d> Present<'d> {
+         let rows = csc_rows(color, depth, msb_packed);
+         let mut pc = [0f32; 16];
+         pc[..12].copy_from_slice(rows.as_flattened());
+-        // Mode 1 = PQ->SDR tonemap. This lane never asks for an HDR swapchain, so a PQ
+-        // stream is always tone-mapped here rather than passed through.
+-        pc[12] = if color.is_pq() { 1.0 } else { 0.0 };
++        // Mode 1 tone-maps PQ only when the Android surface cannot expose native HDR10.
++        pc[12] = if color.is_pq() && !self.hdr_output {
++            1.0
++        } else {
++            0.0
++        };
+         pc[13] = 4.9; // ~1000 nits over the 203-nit reference, the presenter's default
+         let words = pc.map(f32::to_ne_bytes);
+         // SAFETY: the caller holds `cmd` recording; every handle is owned by this struct and
+@@ -536,16 +549,36 @@ impl<'d> Present<'d> {
+             unsafe { self.device.device_wait_idle() }?;
+         }
+         // SAFETY: physical device and surface are live.
+-        let formats = unsafe {
+-            self.surface_i
+-                .get_physical_device_surface_formats(self.pdev, self.surface)
+-        }?;
+-        let color_space = formats
+-            .iter()
+-            .find(|f| f.format == self.format)
+-            .map(|f| f.color_space)
+-            .unwrap_or(vk::ColorSpaceKHR::SRGB_NONLINEAR);
+-        self.rebuild_swapchain(color_space)
++        self.rebuild_swapchain(self.color_space)?;
++        if let Some(meta) = self.mastering {
++            self.set_hdr_metadata(meta);
++        }
++        Ok(())
++    }
++
++    /// Apply the stream's current ST.2086/CTA-861.3 metadata to the HDR swapchain.
++    pub(super) fn set_hdr_metadata(&mut self, meta: punktfunk_core::quic::HdrMeta) {
++        self.mastering = Some(meta);
++        let Some(ext) = self.hdr_metadata.as_ref().filter(|_| self.hdr_output) else {
++            return;
++        };
++        let xy = |p: [u16; 2]| {
++            vk::XYColorEXT::default()
++                .x(f32::from(p[0]) / 50_000.0)
++                .y(f32::from(p[1]) / 50_000.0)
++        };
++        // ST.2086 stores primaries G, B, R. Vulkan names the fields by colour.
++        let hdr = vk::HdrMetadataEXT::default()
++            .display_primary_green(xy(meta.display_primaries[0]))
++            .display_primary_blue(xy(meta.display_primaries[1]))
++            .display_primary_red(xy(meta.display_primaries[2]))
++            .white_point(xy(meta.white_point))
++            .max_luminance(meta.max_display_mastering_luminance as f32 / 10_000.0)
++            .min_luminance(meta.min_display_mastering_luminance as f32 / 10_000.0)
++            .max_content_light_level(f32::from(meta.max_cll))
++            .max_frame_average_light_level(f32::from(meta.max_fall));
++        // SAFETY: the extension was enabled at device creation and this swapchain is live.
++        unsafe { ext.set_hdr_metadata(&[self.swap.swapchain], &[hdr]) };
+     }
+ 
+     /// Destroy the per-swapchain resources and `old`.
