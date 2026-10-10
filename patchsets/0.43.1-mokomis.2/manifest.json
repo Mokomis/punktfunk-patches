@@ -1,0 +1,60 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "base_tag": "v0.43.1",
+  "base_commit": "a75ca9f7a09ce93512bcace8c53e2c190c70f012",
+  "build_version": "0.43.1-mokomis.2",
+  "target": "aarch64-linux-android",
+  "application_id": "io.unom.punktfunk.mokomis",
+  "tested_host_version": "0.42.0+reconnect-fix.3",
+  "patches": [
+    {
+      "file": "android-pyrowave-hdr.patch",
+      "sha256": "729ece2dede96c587d8653433b2c77b8c87dd76c34de592ee140f371295c6ba1"
+    },
+    {
+      "file": "pyrowave-pin-timing-wall.patch",
+      "sha256": "720377e45306f6786068b435f456df23858fb87c369feaa7bc3c3d955f3f9030"
+    },
+    {
+      "file": "android-pyrowave-444.patch",
+      "sha256": "d932efdec6ab17e29e80ae59411a18bcc0a6afc37f839f2c2c2866c1be27f31a"
+    },
+    {
+      "file": "android-display-hdr-volume.patch",
+      "sha256": "2e038e03e5d0f2680d66a75c98bd931e55116c2f1d627f47f5d9258e52d4dbdd"
+    },
+    {
+      "file": "android-wifi-downlink-hud.patch",
+      "sha256": "7686997c6a32344eaf25d5fa7e576a023968558312fe9d734268854208dff5c6"
+    },
+    {
+      "file": "android-wifi-downlink-hud-load.patch",
+      "sha256": "ebd0880bd2853408790cc292813be68eaaca094ed2f6caab638337d4d0a229e2"
+    },
+    {
+      "file": "pyrowave-fragment-idwt.patch",
+      "sha256": "6ee888bf4b99fc51ce5d2d275ff69d1ea572e84e38d208f26bc3ae97ee96daca"
+    },
+    {
+      "file": "pyrowave-gpu-step-timing.patch",
+      "sha256": "6d5a94490fbb97d24d72366d2fce96891fb8dd8d5542bdd4a2c80ad0e9939270"
+    },
+    {
+      "file": "android-wifi-hud-reduced-wording.patch",
+      "sha256": "ca7574d1880d99e71233e4427dd69e8cadc576139a8178ef5b9fb0c19e517524"
+    },
+    {
+      "file": "android-frame-presentation.patch",
+      "sha256": "1e22323580f258532ca27c9325ad30f75fb835cb4bd4e22a9c758956b1e99ce7"
+    },
+    {
+      "file": "android-per-title-presets.patch",
+      "sha256": "826ebe4d2604726df03809b22520ac49eeef181f063f84a768e9365371c02495"
+    },
+    {
+      "file": "android-custom-app-id.patch",
+      "sha256": "f98365b8f28a15f618490dc03a279d9f37fbb284a0d490b6ec620191d59f2669"
+    }
+  ],
+  "binary_sha256": "594d200b0be4af5a448305e1f7b75f12c6fc98ccf2ae37132299d8af0984ada0"
+}

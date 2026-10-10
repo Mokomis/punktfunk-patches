@@ -1,6 +1,6 @@
 # Potential patches
 
-Ideas not yet built, for the Windows PunktFunk host and for the Android client. The host on the PC today is `0.42.0+reconnect-fix.3`; the client on the tablet is `0.42.0-mokomis.8`.
+Ideas not yet built, for the Windows PunktFunk host and for the Android client. The host on the PC today is `0.42.0+reconnect-fix.3`; the client on the tablet is `0.43.1-mokomis.2`.
 
 - [Host](#host)
 - [Client](#client)
@@ -155,6 +155,8 @@ None of these needs new code. Each is one session with the tablet connected for 
 
 | Test | What it answers | Setup |
 |---|---|---|
+| HEVC judder against a 0.43.1 host | Whether upstream's host fix (virtual display at twice the stream rate, v0.43.1) removes the judder on the default display path, making Frame presentation optional | After the host update: same game below the stream rate, Frame presentation on Automatic, then Direct; compare by eye and by `latchMs` |
+| PyroWave on the 0.43.1 client | That the fragment path and step timing still work on upstream's reworked wavelet presenter | One PyroWave session with `debug.punktfunk.pyro_stats=1`; check `idwt="fragment"` and the step times |
 | Per-title presets (`mokomis.8`) | That a preset bound to a title is used when it is launched, from both interfaces, and that a preset's Frame presentation applies | Create two presets in the touch settings (for example HEVC and PyroWave), bind each to a title, launch both; check the codec in the overlay and the presenter lines in the log |
 | Frame presentation at a matched rate | Whether Direct or on-arrival is any worse when the game holds the stream's rate | A steady 120 fps game on a 120 Hz stream, each of the three choices |
 | Lower GPU clock floor with the fragment path | Whether PyroWave still decodes smoothly below 1025 MHz, or at stock, and how much cooler it runs | PyroWave 4:2:0, timing option on (`debug.punktfunk.pyro_stats=1`), floor at stock, then steps up. One data point already: at stock, decode was 8.8 ms at 56% busy and looked smooth |
