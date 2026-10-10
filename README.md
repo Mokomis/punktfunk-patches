@@ -36,14 +36,14 @@ Matching the client's release to the host's is the safer choice. Controller butt
 On a clean checkout of the patchset's base commit, apply in this order, then build:
 
 ```sh
-P=/path/to/punktfunk-patches/patchsets/0.42.0-mokomis.8
+P=/path/to/punktfunk-patches/patchsets/0.43.1-mokomis.2
 git apply "$P/android-pyrowave-hdr.patch" "$P/pyrowave-pin-timing-wall.patch" \
   "$P/android-pyrowave-444.patch" "$P/android-display-hdr-volume.patch" \
   "$P/android-wifi-downlink-hud.patch" "$P/android-wifi-downlink-hud-load.patch" \
   "$P/pyrowave-fragment-idwt.patch" "$P/pyrowave-gpu-step-timing.patch" \
   "$P/android-wifi-hud-reduced-wording.patch" "$P/android-frame-presentation.patch" \
   "$P/android-per-title-presets.patch" "$P/android-custom-app-id.patch"
-cd clients/android && VERSION_NAME=0.42.0-mokomis.8 ./gradlew :app:assembleDebug
+cd clients/android && VERSION_NAME=0.43.1-mokomis.2 ./gradlew :app:assembleDebug
 ```
 
 `scripts/apply.py` covers the host patchset only. A separately signed client has its own pairing identity: pair it once with the host. Builds installed over the same application id keep it.
