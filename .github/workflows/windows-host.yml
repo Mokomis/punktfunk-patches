@@ -1,0 +1,252 @@
+name: Build personal Windows host
+'on':
+  push:
+    branches:
+    - build/windows-host-main-55cc38de
+    paths:
+    - .github/workflows/windows-host.yml
+    - patchsets/main-55cc38de-mokomis.1/host/**
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: personal-windows-host-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: C:\pf
+    env:
+      CARGO_TARGET_DIR: C:\t
+      CARGO_INCREMENTAL: '0'
+      HOST_VERSION: 0.44.0-dev-mokomis.1
+      PUNKTFUNK_BUILD_VERSION: 0.44.0-dev-mokomis.1
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check out pinned upstream and apply host patch
+      shell: pwsh
+      run: |
+        git clone https://github.com/punktfunk/punktfunk.git C:\pf
+        if ($LASTEXITCODE) { throw 'upstream clone' }
+        Set-Location C:\pf
+        git checkout --detach 55cc38de8a20271fd86fbf95d59dbc3beffea207
+        if ($LASTEXITCODE) { throw 'upstream checkout' }
+        $patches = Get-ChildItem "$env:GITHUB_WORKSPACE\patchsets\main-55cc38de-mokomis.1\host\*.patch" | Sort-Object Name
+        if ($patches.Count -ne 1) { throw 'expected one host patch' }
+        git -c user.name=me -c user.email=me@localhost am @($patches.FullName)
+        if ($LASTEXITCODE) { git am --abort; throw 'host patch did not apply' }
+        git log --oneline -2
+      working-directory: ${{ github.workspace }}
+    - uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+    - name: Configure build tools
+      run: |
+        rustup toolchain install 1.96.0 --profile minimal --component rustfmt,clippy
+        if ($LASTEXITCODE) { throw 'Rust toolchain' }
+        choco install nasm --no-progress -y
+        if ($LASTEXITCODE) { throw 'NASM install' }
+        'C:\Program Files\NASM' | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+        $clang = 'C:\Program Files\LLVM\bin'
+        if (-not (Test-Path "$clang\libclang.dll")) { throw 'libclang missing' }
+        "LIBCLANG_PATH=$clang" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+        'Version_Number=10.0.26100.0' | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+        & scripts/ci/provision-windows-wdk.ps1
+    - name: Locale-safety gate (installer-run scripts must be ASCII)
+      shell: pwsh
+      run: |
+        $bad = Get-ChildItem packaging/windows/*.ps1, scripts/windows/*.ps1, scripts/windows/*.cmd -ErrorAction SilentlyContinue |
+          Where-Object { [IO.File]::ReadAllText($_.FullName) -match '[^\x00-\x7F]' }
+        if ($bad) {
+          $bad.FullName | ForEach-Object { Write-Output "::error::non-ASCII in installer-run script: $_" }
+          throw "installer-run scripts must be pure ASCII (PS 5.1 mis-parses them on non-UTF-8 locales)"
+        }
+        Write-Output "installer-run scripts are ASCII-clean"
+    - name: Build (release, host)
+      shell: pwsh
+      run: |
+        cargo build --release --locked -p punktfunk-host --features nvenc,qsv --target x86_64-pc-windows-msvc
+    - name: Build (release, status tray)
+      shell: pwsh
+      run: |
+        cargo build --release --locked -p punktfunk-tray --target x86_64-pc-windows-msvc
+    - name: Build (release, seat keeper)
+      shell: pwsh
+      run: |
+        cargo build --release --locked --manifest-path crates/host/pf-seat-keeper/Cargo.toml --target x86_64-pc-windows-msvc
+    - name: Build (release, capture worker)
+      shell: pwsh
+      run: |
+        cargo build --release --locked -p punktfunk-capture-worker --target x86_64-pc-windows-msvc
+    - name: Test (pf-capture, Windows)
+      shell: pwsh
+      run: |
+        cargo test --release --locked -p pf-capture --target x86_64-pc-windows-msvc; if ($LASTEXITCODE) { throw "pf-capture tests" }
+        cargo test --release --locked -p pf-win-display --target x86_64-pc-windows-msvc; if ($LASTEXITCODE) { throw "pf-win-display tests" }
+        cargo test --release --locked -p pf-seats --target x86_64-pc-windows-msvc; if ($LASTEXITCODE) { throw "pf-seats tests" }
+    - name: Test (pf-vdisplay, Windows)
+      shell: pwsh
+      run: |
+        cargo test --release --locked -p pf-vdisplay --target x86_64-pc-windows-msvc; if ($LASTEXITCODE) { throw "pf-vdisplay tests" }
+    - name: Build + lint the HDR Vulkan layer (pf-vkhdr-layer)
+      shell: pwsh
+      run: |
+        Push-Location packaging/windows/pf-vkhdr-layer
+        cargo fmt --check; if ($LASTEXITCODE) { throw "pf-vkhdr-layer rustfmt" }
+        cargo clippy --release --locked --target x86_64-pc-windows-msvc -- -D warnings; if ($LASTEXITCODE) { throw "pf-vkhdr-layer clippy" }
+        Pop-Location
+    - name: Fetch portable bun runtime (build tool + bundled to run the console)
+      shell: pwsh
+      run: |
+        $ver = 'bun-v1.4.2'
+        $sha = 'ce4c17497b2f29712a99d3d53f028de28cd42e3bacb8589599e7f000e49b6405'
+        $td = 'C:\t'
+        New-Item -ItemType Directory -Force -Path $td | Out-Null
+        function Get-Bun([string]$asset, [string]$pin, [string]$dst) {
+          $url = "https://github.com/oven-sh/bun/releases/download/$ver/$asset"
+          $zip = Join-Path $td "$asset"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($got -ne $pin) { throw "bun zip sha256 mismatch for ${ver}/${asset}: got $got, pinned $pin" }
+          if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+          Expand-Archive -Path $zip -DestinationPath $dst -Force
+          $exe = (Get-ChildItem -Path $dst -Recurse -Filter bun.exe | Select-Object -First 1).FullName
+          if (-not $exe) { throw "bun.exe not found in $url" }
+          $exe
+        }
+        $bun = Get-Bun 'bun-windows-x64.zip' $sha (Join-Path $td 'bundist')
+        "BUN_EXE=$bun" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        & $bun --version
+        $ship = Get-Bun 'bun-windows-x64-baseline.zip' '78c221c2376f79731ccf4e4af0b3bb46d81fefa3296c5abee09ad8a1b21e68c6' (Join-Path $td 'bundist-ship')
+        "BUN_SHIP_EXE=$ship" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Build + smoke-boot web console (bun)
+      shell: pwsh
+      env:
+        REGISTRY_TOKEN: ${{ secrets.UNOM_REGISTRY_TOKEN }}
+      run: |
+        $bun = $env:BUN_EXE
+        if ($env:REGISTRY_TOKEN) {
+          $rc = Join-Path $env:USERPROFILE '.npmrc'
+          Add-Content -Path $rc -Value '@unom:registry=https://git.unom.io/api/packages/unom/npm/'
+          Add-Content -Path $rc -Value "//git.unom.io/api/packages/unom/npm/:_authToken=$env:REGISTRY_TOKEN"
+        }
+        Push-Location web
+        & $bun install --frozen-lockfile --ignore-scripts; if ($LASTEXITCODE) { throw "bun install failed ($LASTEXITCODE)" }
+        & $bun run build; if ($LASTEXITCODE) { throw "web build failed ($LASTEXITCODE)" }
+        if (-not (Select-String -Path .output\server\index.mjs -Pattern 'Bun\.serve' -Quiet)) {
+          throw "web build is not a bun bundle - need the 'bun' preset + custom entry"
+        }
+        Pop-Location
+        $env:PORT = '3009'; $env:HOST = '127.0.0.1'; $env:PUNKTFUNK_UI_PASSWORD = 'ci'
+        $server = (Resolve-Path 'web\.output\server\index.mjs').Path
+        $p = Start-Process -FilePath $bun -ArgumentList $server -PassThru -WindowStyle Hidden
+        Start-Sleep -Seconds 4
+        try { $code = (Invoke-WebRequest -Uri 'http://127.0.0.1:3009/login' -UseBasicParsing -TimeoutSec 10).StatusCode } catch { $code = 0 }
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        Write-Output "web console smoke (bun): /login -> $code"
+        if ($code -ne 200) { throw "web console failed to boot under bun" }
+    - name: Export the console output dir (cache hit or fresh build)
+      shell: pwsh
+      run: |
+        if (-not (Test-Path 'web\.output\server\index.mjs')) {
+          throw "web\.output is missing - neither the cache restore nor the build produced it, and the installer must not ship without the console"
+        }
+        "WEB_OUTPUT_DIR=$((Resolve-Path 'web\.output').Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Build plugin/script runner bundle (bun)
+      shell: pwsh
+      run: |
+        $bun = $env:BUN_EXE
+        Push-Location sdk
+        & $bun install --frozen-lockfile --ignore-scripts; if ($LASTEXITCODE) { throw "sdk bun install failed ($LASTEXITCODE)" }
+        $scr = 'C:\t\scripting'
+        New-Item -ItemType Directory -Force -Path $scr | Out-Null
+        & $bun build src/runner-cli.ts --target=bun --outfile=$scr\runner-cli.js; if ($LASTEXITCODE) { throw "runner bundle build failed ($LASTEXITCODE)" }
+        Pop-Location
+        if (-not (Select-String -Path $scr\runner-cli.js -Pattern 'attempt=' -Quiet)) {
+          throw "runner bundle missing the dynamic plugin import - wrong build"
+        }
+        "SCRIPTING_BUNDLE=$scr\runner-cli.js" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Verify every installer payload is present
+      shell: pwsh
+      run: |
+        $need = @(
+          @{ n = 'web console (WEB_OUTPUT_DIR)';    p = $env:WEB_OUTPUT_DIR;   f = 'server\index.mjs' }
+          @{ n = 'bun runtime (BUN_SHIP_EXE)';      p = $env:BUN_SHIP_EXE;     f = '' }
+          @{ n = 'plugin runner (SCRIPTING_BUNDLE)';p = $env:SCRIPTING_BUNDLE; f = '' }
+        )
+        $missing = @()
+        foreach ($x in $need) {
+          if (-not $x.p) { $missing += "$($x.n): env var not set"; continue }
+          $full = if ($x.f) { Join-Path $x.p $x.f } else { $x.p }
+          if (-not (Test-Path $full)) { $missing += "$($x.n): missing $full" }
+          else { Write-Output "payload OK - $($x.n) -> $full" }
+        }
+        if ($missing.Count) {
+          $missing | ForEach-Object { Write-Output "MISSING PAYLOAD - $_" }
+          throw "$($missing.Count) installer payload(s) missing - refusing to ship an incomplete installer"
+        }
+    - name: Pack + sign installer
+      shell: pwsh
+      env:
+        MSIX_CERT_PFX_B64: ${{ secrets.MSIX_CERT_PFX_B64 }}
+        MSIX_CERT_PASSWORD: ${{ secrets.MSIX_CERT_PASSWORD }}
+        DRIVER_CERT_PFX_B64: ${{ secrets.DRIVER_CERT_PFX_B64 }}
+        DRIVER_CERT_PASSWORD: ${{ secrets.DRIVER_CERT_PASSWORD }}
+      run: |
+        & packaging/windows/pack-host-installer.ps1 `
+          -Version $env:HOST_VERSION -TargetDir C:\t\x86_64-pc-windows-msvc\release -OutDir C:\t\out `
+          -Arch x64 -BunExe $env:BUN_SHIP_EXE
+    - name: Smoke the installer (inspect, signature)
+      shell: pwsh
+      run: |
+        $setup = $env:HOST_SETUP_PATH
+        & $env:HOST_PACK_TOOL inspect $setup
+        if ($LASTEXITCODE -ne 0) { throw "inspect failed ($LASTEXITCODE)" }
+        $sig = Get-AuthenticodeSignature $setup
+        Write-Output "installer Authenticode: $($sig.Status) ($($sig.SignerCertificate.Subject))"
+        if (-not $sig.SignerCertificate) { throw "installer is unsigned" }
+        $b = [IO.File]::ReadAllBytes($setup)
+        $machine = [BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 0x3c) + 4)
+        $want = if ('x64' -eq 'arm64') { 0xAA64 } else { 0x8664 }
+        if ($machine -ne $want) { throw ("installer PE Machine is 0x{0:X4}, expected 0x{1:X4}" -f $machine, $want) }
+        Write-Output ("installer: {0} MB, PE Machine 0x{1:X4}" -f [math]::Round((Get-Item $setup).Length / 1MB, 1), $machine)
+    - name: Smoke the stamped version
+      shell: pwsh
+      run: |
+        $got = & 'C:\t\out\punktfunk-host.exe' --version
+        if ($got -ne "punktfunk-host $env:HOST_VERSION") { throw "stamped exe reports '$got', not $env:HOST_VERSION" }
+        Write-Output $got
+    - name: Smoke the installer (silent dry-run)
+      shell: pwsh
+      run: |
+        $setup = $env:HOST_SETUP_PATH
+        $log = 'C:\t\out\smoke.log'
+        Remove-Item $log -ErrorAction SilentlyContinue
+        $p = Start-Process -FilePath $setup -PassThru -Wait `
+          -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/LOG=$log", '--dry-run'
+        if ($p.ExitCode -ne 0) { throw "silent dry-run exited $($p.ExitCode)" }
+        $text = Get-Content $log -Raw
+        foreach ($line in @('==> Detected Windows', 'punktfunk-host.exe" service install', 'web setup', 'Done. Next:')) {
+          if (-not $text.Contains($line)) { throw "smoke transcript lacks: $line" }
+        }
+        Get-Content $log
+        Write-Output "installer: $([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB"
+    - name: Prepare download and checksums
+      run: |
+        $dst = "$env:GITHUB_WORKSPACE\artifacts"
+        New-Item -ItemType Directory -Force $dst | Out-Null
+        Copy-Item $env:HOST_SETUP_PATH $dst
+        if ($env:HOST_CER_PATH -and (Test-Path $env:HOST_CER_PATH)) { Copy-Item $env:HOST_CER_PATH $dst }
+        Get-ChildItem $dst -File | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content "$dst\SHA256SUMS.txt"
+        "Installer for client 0.44.0-dev-mokomis.1. Upstream 55cc38de8a20271fd86fbf95d59dbc3beffea207 plus main-55cc38de-mokomis.1 host patch. Personal self-signed build; Windows 11 22H2 or newer. Run the setup executable on the host PC." | Set-Content "$dst\README.txt"
+    - name: Upload Windows installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: punktfunk-host-0.44.0-dev-mokomis.1-windows-x64
+        path: artifacts/
+        if-no-files-found: error
+        retention-days: 30
