@@ -1,0 +1,26 @@
+From e1bfb9cba0dc14a87cb44f7f7303b804e3b266da Mon Sep 17 00:00:00 2001
+From: Mokomis <24596443+Mokomis@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 22:13:07 +0000
+Subject: [PATCH 11/11] port: Frame presentation dropdown names its field
+ (upstream 8c7fd239f)
+
+---
+ .../app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt     | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
+index 849d1d5f3..79e440dc6 100644
+--- a/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
++++ b/clients/android/app/src/main/kotlin/io/unom/punktfunk/SettingsScreen.kt
+@@ -1015,7 +1015,7 @@ private fun DisplaySettings(s: Settings, update: (String, Settings) -> Unit, con
+             caption = "How decoded video reaches the screen (not PyroWave). Try Direct if motion " +
+                 "judders when the game's frame rate is below the stream's; on arrival shows " +
+                 "each frame the moment it is decoded.",
+-        ) { v -> update(s.copy(framePresentation = v)) }
++        ) { v -> update("frame_presentation", s.copy(framePresentation = v)) }
+         if (smoothing) {
+             SettingDropdown(
+                 label = "Smoothness buffer",
+-- 
+2.43.0
+

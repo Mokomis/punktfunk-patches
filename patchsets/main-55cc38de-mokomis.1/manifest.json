@@ -1,0 +1,68 @@
+{
+  "upstream": "https://git.unom.io/unom/punktfunk.git",
+  "mirror": "https://github.com/punktfunk/punktfunk.git",
+  "base_ref": "main",
+  "base_commit": "55cc38de8a20271fd86fbf95d59dbc3beffea207",
+  "build_version": "0.44.0-dev-mokomis.1",
+  "target": "aarch64-linux-android",
+  "application_id": "io.unom.punktfunk.mokomis",
+  "ported_from": "0.43.1-mokomis.2",
+  "dropped": [
+    "android-pyrowave-444.patch",
+    "pyrowave-pin-timing-wall.patch"
+  ],
+  "apply": "git am client/*.patch (client), git am host/*.patch (host)",
+  "client_patches": [
+    {
+      "file": "client/0001-android-pyrowave-hdr.patch",
+      "sha256": "bfc950c0ab1e9801fc612bf40a9e8abe1c4c240df3c9dfa3dd7441a0cef14ad3"
+    },
+    {
+      "file": "client/0002-android-display-hdr-volume.patch",
+      "sha256": "9b4ca5bd39f589ca781762a7e0e7930688d0f668e30996fb4e8da4e65b095dcb"
+    },
+    {
+      "file": "client/0003-android-wifi-downlink-hud.patch",
+      "sha256": "6d5de8ecc13e467b607b4c4718c97e8a47c4c04e6763d1bd12d4fb5ece5142a8"
+    },
+    {
+      "file": "client/0004-android-wifi-downlink-hud-load.patch",
+      "sha256": "8bc47065c130d51e633806b66099615e145d745d6932ba9a2abcf4d44d3b0eb3"
+    },
+    {
+      "file": "client/0005-pyrowave-fragment-idwt.patch",
+      "sha256": "2a89ccb328dbf5bc277a9354a33b4ccd638ed1e02b2dfc3be6cc147e3876575b"
+    },
+    {
+      "file": "client/0006-pyrowave-gpu-step-timing.patch",
+      "sha256": "5316e1647138ba8adff35a5bc303cb9da1e2006ccf991a46e4abb3d11c4fb47d"
+    },
+    {
+      "file": "client/0007-android-wifi-hud-reduced-wording.patch",
+      "sha256": "9ca985b9304c6f1976588d79f57fc220b31a3f3053b34c078a3abeb19dd7fd6f"
+    },
+    {
+      "file": "client/0008-android-frame-presentation.patch",
+      "sha256": "6a448540ecdd14c0340129ff57ed4f508e314ca8f6ec26f6d8ecd7f82a10cfba"
+    },
+    {
+      "file": "client/0009-android-per-title-presets.patch",
+      "sha256": "615de2c3ea89069ff9249173e56aea0e79ff7896db9b6dd5cf53ab9c1607c7c3"
+    },
+    {
+      "file": "client/0010-android-custom-app-id.patch",
+      "sha256": "63b8e95e8295d401b178761e99ff06ad2a818803abaede28b0de1e83b5bfe6f9"
+    },
+    {
+      "file": "client/0011-port-Frame-presentation-dropdown-names-its-field-ups.patch",
+      "sha256": "394a3afc7aa150e4de649fb3c0731c7ec1bdcc219a0975965977010abcd8c459"
+    }
+  ],
+  "host_patches": [
+    {
+      "file": "host/0001-host-carry-the-three-reconnect-fix.3-parts-upstream-.patch",
+      "sha256": "dcdf0678e0bf7add126f6badc4049ddfa7e36997a160937bbe7fc6d89bb0e6a4"
+    }
+  ],
+  "binary_sha256": null
+}

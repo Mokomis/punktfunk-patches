@@ -1,0 +1,174 @@
+From 78097488050c4357840a2b3c85e02feb32c4d458 Mon Sep 17 00:00:00 2001
+From: Mokomis <24596443+Mokomis@users.noreply.github.com>
+Date: Sun, 11 Oct 2026 22:12:39 +0000
+Subject: [PATCH] host: carry the three reconnect-fix.3 parts upstream still
+ lacks
+
+- The virtual-display keepalive pinger parks between pings and is woken on
+  stop, so the last slot's teardown no longer waits up to watchdog/3 s.
+- The 1 s drain window before close is cut short when the session was
+  stopped (preempted or reconnecting).
+- On Windows, a silent loopback sink is polled every 100 ms instead of
+  blocking up to 5 s, so a stopped session releases its capture promptly.
+
+The reconnect wait itself is upstream's wait_released and is not changed.
+Ported from patchsets/0.42.0-reconnect-fix.3 for personal use.
+---
+ crates/host/pf-vdisplay/src/lib.rs            |  3 ++
+ crates/host/pf-vdisplay/src/pinger_wait.rs    | 49 +++++++++++++++++++
+ .../src/vdisplay/windows/manager.rs           | 12 ++---
+ crates/host/punktfunk-host/src/native.rs      | 14 +++++-
+ .../host/punktfunk-host/src/native/audio.rs   |  4 ++
+ 5 files changed, 74 insertions(+), 8 deletions(-)
+ create mode 100644 crates/host/pf-vdisplay/src/pinger_wait.rs
+
+diff --git a/crates/host/pf-vdisplay/src/lib.rs b/crates/host/pf-vdisplay/src/lib.rs
+index 9d38c2e11..2ccab6177 100644
+--- a/crates/host/pf-vdisplay/src/lib.rs
++++ b/crates/host/pf-vdisplay/src/lib.rs
+@@ -10,6 +10,9 @@
+ // Windows backend (`vdisplay/windows/`) is not enforced; review has to catch orphans.
+ #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+ 
++#[cfg(any(windows, test))]
++mod pinger_wait;
++
+ use anyhow::Result;
+ pub use punktfunk_core::Mode;
+ #[cfg(target_os = "linux")]
+diff --git a/crates/host/pf-vdisplay/src/pinger_wait.rs b/crates/host/pf-vdisplay/src/pinger_wait.rs
+new file mode 100644
+index 000000000..bf2034dde
+--- /dev/null
++++ b/crates/host/pf-vdisplay/src/pinger_wait.rs
+@@ -0,0 +1,49 @@
++//! Interruptible interval between virtual-display keepalive calls.
++
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::thread::{self, JoinHandle};
++use std::time::Duration;
++
++pub(crate) fn wait(stop: &AtomicBool, interval: Duration) {
++    if !stop.load(Ordering::Relaxed) {
++        thread::park_timeout(interval);
++    }
++}
++
++pub(crate) fn stop_and_join(stop: &AtomicBool, worker: JoinHandle<()>) {
++    stop.store(true, Ordering::Relaxed);
++    worker.thread().unpark();
++    let _ = worker.join();
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::{mpsc, Arc};
++    use std::time::Instant;
++
++    #[test]
++    fn teardown_wakes_a_long_keepalive_interval() {
++        let stop = Arc::new(AtomicBool::new(false));
++        let flag = stop.clone();
++        let (ready, started) = mpsc::channel();
++        let worker = thread::spawn(move || {
++            ready.send(()).unwrap();
++            while !flag.load(Ordering::Relaxed) {
++                wait(&flag, Duration::from_secs(3));
++            }
++        });
++        started.recv().unwrap();
++        let begin = Instant::now();
++        stop_and_join(&stop, worker);
++        assert!(begin.elapsed() < Duration::from_millis(500));
++    }
++
++    #[test]
++    fn stop_before_the_wait_returns_without_parking() {
++        let stop = AtomicBool::new(true);
++        let begin = Instant::now();
++        wait(&stop, Duration::from_secs(3));
++        assert!(begin.elapsed() < Duration::from_millis(500));
++    }
++}
+diff --git a/crates/host/pf-vdisplay/src/vdisplay/windows/manager.rs b/crates/host/pf-vdisplay/src/vdisplay/windows/manager.rs
+index cdbf569b2..f74a93641 100644
+--- a/crates/host/pf-vdisplay/src/vdisplay/windows/manager.rs
++++ b/crates/host/pf-vdisplay/src/vdisplay/windows/manager.rs
+@@ -521,12 +521,12 @@ struct Pinger {
+ }
+ 
+ impl Pinger {
+-    /// Signal and join. The pinger's join is bounded by its interval (watchdog/3 s), the
+-    /// exclusive watch's by its 250 ms slices: it only `try_lock`s the state lock, so stopping
+-    /// it under that lock cannot deadlock.
++    /// Signal, wake and join. The pinger parks between pings, so the wake ends its interval at
++    /// once instead of after up to watchdog/3 s; the exclusive watch's join is bounded by its
++    /// 250 ms slices: it only `try_lock`s the state lock, so stopping it under that lock cannot
++    /// deadlock.
+     fn stop(self) {
+-        self.stop.store(true, Ordering::Relaxed);
+-        let _ = self.thread.join();
++        crate::pinger_wait::stop_and_join(&self.stop, self.thread);
+     }
+ }
+ 
+@@ -1104,7 +1104,7 @@ impl VirtualDisplayManager {
+                             }
+                         }
+                     }
+-                    thread::sleep(interval);
++                    crate::pinger_wait::wait(&stop_t, interval);
+                 }
+             });
+         // Not `thread::spawn`: that panics if the OS refuses the thread, and
+diff --git a/crates/host/punktfunk-host/src/native.rs b/crates/host/punktfunk-host/src/native.rs
+index 6a30cc1e7..0e9c94c57 100644
+--- a/crates/host/punktfunk-host/src/native.rs
++++ b/crates/host/punktfunk-host/src/native.rs
+@@ -583,6 +583,15 @@ const SIDE_THREAD_JOIN_GRACE: std::time::Duration = std::time::Duration::from_se
+ 
+ /// Resolves once `stop` has been set for [`STREAM_STOP_GRACE`].
+ /// Polled: `stop` is a plain flag shared with blocking threads (500 ms, one relaxed load).
++/// Up to 1 s for queued video to leave before close, cut short when the session was stopped:
++/// a reconnect waits on this teardown, and a stopped session has nothing left worth sending.
++async fn drain_window(stop: &AtomicBool) {
++    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
++    while !stop.load(Ordering::SeqCst) && tokio::time::Instant::now() < deadline {
++        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
++    }
++}
++
+ async fn stop_overdue(stop: &AtomicBool) {
+     while !stop.load(Ordering::SeqCst) {
+         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+@@ -1667,8 +1676,9 @@ pub(crate) async fn run_admitted(
+                 anyhow::bail!("stream thread wedged after stop");
+             }
+         }
+-        // Drain window before close.
+-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
++        // Drain window before close: a normal end lets queued video leave; a stopped
++        // (preempted or reconnecting) session closes its side planes at once.
++        drain_window(&stop).await;
+         Ok(())
+     }
+     .await;
+diff --git a/crates/host/punktfunk-host/src/native/audio.rs b/crates/host/punktfunk-host/src/native/audio.rs
+index 1f5ebeeec..fa935a285 100644
+--- a/crates/host/punktfunk-host/src/native/audio.rs
++++ b/crates/host/punktfunk-host/src/native/audio.rs
+@@ -488,6 +488,10 @@ pub(super) fn audio_thread(
+         // Wake on a chunk or the next owed slot, whichever first. Waiting only on capture
+         // made a hole cost more than the audio it swallowed — see [`InfillPolicy`].
+         let wake = pacer.wake_budget(std::time::Instant::now(), acc.len());
++        // A silent Windows sink delivers nothing, and an unbounded wait there blocks for 5 s:
++        // bound it so a stopped session releases the parked capture promptly.
++        #[cfg(windows)]
++        let wake = wake.or(Some(std::time::Duration::from_millis(100)));
+         let Some(chunk) = lease.next_chunk(wake) else {
+             continue;
+         };
+-- 
+2.43.0
+

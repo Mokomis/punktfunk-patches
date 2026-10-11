@@ -1,0 +1,12 @@
+bfc950c0ab1e9801fc612bf40a9e8abe1c4c240df3c9dfa3dd7441a0cef14ad3  client/0001-android-pyrowave-hdr.patch
+9b4ca5bd39f589ca781762a7e0e7930688d0f668e30996fb4e8da4e65b095dcb  client/0002-android-display-hdr-volume.patch
+6d5de8ecc13e467b607b4c4718c97e8a47c4c04e6763d1bd12d4fb5ece5142a8  client/0003-android-wifi-downlink-hud.patch
+8bc47065c130d51e633806b66099615e145d745d6932ba9a2abcf4d44d3b0eb3  client/0004-android-wifi-downlink-hud-load.patch
+2a89ccb328dbf5bc277a9354a33b4ccd638ed1e02b2dfc3be6cc147e3876575b  client/0005-pyrowave-fragment-idwt.patch
+5316e1647138ba8adff35a5bc303cb9da1e2006ccf991a46e4abb3d11c4fb47d  client/0006-pyrowave-gpu-step-timing.patch
+9ca985b9304c6f1976588d79f57fc220b31a3f3053b34c078a3abeb19dd7fd6f  client/0007-android-wifi-hud-reduced-wording.patch
+6a448540ecdd14c0340129ff57ed4f508e314ca8f6ec26f6d8ecd7f82a10cfba  client/0008-android-frame-presentation.patch
+615de2c3ea89069ff9249173e56aea0e79ff7896db9b6dd5cf53ab9c1607c7c3  client/0009-android-per-title-presets.patch
+63b8e95e8295d401b178761e99ff06ad2a818803abaede28b0de1e83b5bfe6f9  client/0010-android-custom-app-id.patch
+394a3afc7aa150e4de649fb3c0731c7ec1bdcc219a0975965977010abcd8c459  client/0011-port-Frame-presentation-dropdown-names-its-field-ups.patch
+dcdf0678e0bf7add126f6badc4049ddfa7e36997a160937bbe7fc6d89bb0e6a4  host/0001-host-carry-the-three-reconnect-fix.3-parts-upstream-.patch
