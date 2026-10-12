@@ -1,8 +1,8 @@
 From 31637fba65186f7ab8b864e090666aeb34ba402f Mon Sep 17 00:00:00 2001
 From: Mokomis <24596443+Mokomis@users.noreply.github.com>
 Date: Mon, 12 Oct 2026 01:12:41 +0000
-Subject: [PATCH] diag(pyrowave): replay a capture and dump raw decoded planes
- per driver
+Subject: [PATCH 1/2] diag(pyrowave): replay a capture and dump raw decoded
+ planes per driver
 
 For the Turnip vs Qualcomm comparison on the OPPO Pad Mini: decode the same
 captured AUs on either driver and compare the raw Y/Cb/Cr planes before any

@@ -1,0 +1,52 @@
+From 11039861cc2d51b12f779591aacc765d62a904e5 Mon Sep 17 00:00:00 2001
+From: Mokomis <24596443+Mokomis@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 01:18:32 +0000
+Subject: [PATCH 2/2] diag(pyrowave): pin the dequant shader's subgroup size
+ from the environment
+
+PYROWAVE_DEQUANT_SUBGROUP_LOG2=<4..7> requests that exact subgroup size for
+wavelet_dequant.comp instead of the 16-128 range the driver may vary within.
+For the Turnip comparison: the shader's block-offset scan needs 16 lanes in one
+subgroup, and lavapipe (subgroup size 8) decodes the golden fixture corrupted.
+---
+ .../vendor/pyrowave/pyrowave_decoder.cpp         | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+index 45cc9bc9c..8f8a6f2a0 100644
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+@@ -7,6 +7,7 @@
+ #include "math.hpp"
+ #include "pyrowave_common.hpp"
+ #include <algorithm>
++#include <cstdlib>
+ 
+ namespace PyroWave
+ {
+@@ -298,8 +299,21 @@ bool Decoder::Impl::dequant(CommandBuffer &cmd)
+ 	cmd.set_specialization_constant_mask(0);
+ 	cmd.enable_subgroup_size_control(true);
+ 
+-	if (device->supports_subgroup_size_log2(true, 4, 7))
++	// Diagnostic (punktfunk driver comparison): PYROWAVE_DEQUANT_SUBGROUP_LOG2=<n> pins the
++	// dequant shader to subgroup size 2^n (4..7) instead of letting the driver vary it.
++	int forced_log2 = 0;
++	if (const char *env = getenv("PYROWAVE_DEQUANT_SUBGROUP_LOG2"))
++		forced_log2 = int(strtol(env, nullptr, 0));
++
++	if (forced_log2 >= 4 && forced_log2 <= 7 && device->supports_subgroup_size_log2(true, forced_log2, forced_log2))
++	{
++		LOGI("pyrowave: dequant subgroup size pinned to %d.\n", 1 << forced_log2);
++		cmd.set_subgroup_size_log2(true, forced_log2, forced_log2);
++	}
++	else if (device->supports_subgroup_size_log2(true, 4, 7))
+ 	{
++		if (forced_log2)
++			LOGE("pyrowave: dequant subgroup size 2^%d not supported; using the driver's choice.\n", forced_log2);
+ 		cmd.set_subgroup_size_log2(true, 4, 7);
+ 	}
+ 	else if (device->supports_subgroup_size_log2(true, 2, 7))
+-- 
+2.43.0
+
