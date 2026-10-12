@@ -1,0 +1,46 @@
+name: Build Turnip for OPPO Adreno 829
+on:
+  push:
+    branches: [build/turnip-a829]
+    paths: [.github/workflows/turnip-a829.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out pinned A8xx build recipes
+        uses: actions/checkout@v4
+        with:
+          repository: The412Banner/Banners-Turnip
+          ref: 3d82e747a6ac00d88de921aa2969cdaa08ac78d4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build patchelf unzip flex bison git perl python3-pip glslang-tools curl zip patch ccache pkg-config
+          pip3 install --break-system-packages meson mako pyyaml packaging
+          if ! command -v glslang >/dev/null; then sudo ln -s "$(command -v glslangValidator)" /usr/local/bin/glslang; fi
+      - name: Compile pinned latest Mesa with A8xx support
+        env:
+          BUILD_VERSION: mokomis-a829
+          MESA_COMMIT: 745709a000482a4a24c91faef5c5a40bd653a863
+          EXTRA_PATCH: patches/a8xx_gen8.patch
+          EXTRA_SCRIPT: patches/a8xx_shared_mem.py:patches/a840v2.py
+        run: |
+          bash build_turnip.sh
+          if find turnip_workdir/mesa -name '*.rej' -print -quit | grep -q .; then
+            echo '::error::A8xx patch rejects found'; exit 1
+          fi
+          mkdir -p artifacts
+          cp turnip_workdir/mesa-turnip-*.zip artifacts/
+          printf '%s\n' "Mesa $MESA_COMMIT" 'Build recipes 3d82e747a6ac00d88de921aa2969cdaa08ac78d4' "A8xx patches: $EXTRA_PATCH; $EXTRA_SCRIPT" > artifacts/SOURCE.txt
+          sha256sum artifacts/*.zip > artifacts/SHA256SUMS.txt
+      - name: Upload compiled Turnip driver
+        uses: actions/upload-artifact@v4
+        with:
+          name: turnip-a829-mesa-745709a
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
