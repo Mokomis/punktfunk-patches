@@ -1,0 +1,66 @@
+[
+  {
+    "time": 1791765375.602638,
+    "texts": [
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 1075.4 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.7 ms p50 \u00b7 22.4 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.9 + decode 6.3",
+      "rtt 11.3 ms",
+      "audio buffer 45 ms \u00b7 a/v +56 ms",
+      "skipped 1 (\u26a0 1 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765381.781227,
+    "texts": [
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 1069.9 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.6 ms p50 \u00b7 23.2 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.1 + decode 6.3",
+      "rtt 11.8 ms",
+      "audio buffer 82 ms \u00b7 a/v +85 ms",
+      "skipped 3 (\u26a0 3 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765388.101946,
+    "texts": [
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 752.8 Mb/s \u00b7 target 788 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 17.9 ms p50 \u00b7 22.1 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.1 + decode 6.5",
+      "rtt 12.5 ms",
+      "audio buffer 88 ms \u00b7 a/v +104 ms",
+      "bitrate lowered: packet loss \u00b7 40 loss repairs/min",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765394.363428,
+    "texts": [
+      "2414\u00d71680@144 \u00b7 134 fps \u00b7 825.1 Mb/s \u00b7 target 889 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.0 ms p50 \u00b7 22.8 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.3 + decode 6.5",
+      "rtt 11.2 ms",
+      "audio buffer 72 ms \u00b7 a/v +91 ms",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765400.498317,
+    "texts": [
+      "2414\u00d71680@144 \u00b7 135 fps \u00b7 885.5 Mb/s \u00b7 target 945 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.5 ms p50 \u00b7 21.9 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.8 + decode 6.3",
+      "rtt 11.9 ms",
+      "audio buffer 58 ms \u00b7 a/v +76 ms",
+      "skipped 1 (\u26a0 1 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  }
+]

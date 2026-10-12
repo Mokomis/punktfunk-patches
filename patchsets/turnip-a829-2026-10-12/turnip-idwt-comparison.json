@@ -1,0 +1,213 @@
+{
+  "stages": {
+    "compute-first": {
+      "all_samples": [
+        {
+          "time": 1791777376.3437,
+          "target_mbps": 1125,
+          "decode_ms": 5.7,
+          "fps": 139,
+          "p50_ms": 17.6,
+          "included": true
+        },
+        {
+          "time": 1791777382.5414479,
+          "target_mbps": 1125,
+          "decode_ms": 6.1,
+          "fps": 138,
+          "p50_ms": 17.9,
+          "included": true
+        },
+        {
+          "time": 1791777388.7884648,
+          "target_mbps": 1125,
+          "decode_ms": 5.9,
+          "fps": 137,
+          "p50_ms": 17.8,
+          "included": true
+        },
+        {
+          "time": 1791777395.0328808,
+          "target_mbps": 1125,
+          "decode_ms": 6.2,
+          "fps": 136,
+          "p50_ms": 18.2,
+          "included": true
+        },
+        {
+          "time": 1791777401.1737568,
+          "target_mbps": 1125,
+          "decode_ms": 5.5,
+          "fps": 138,
+          "p50_ms": 17.6,
+          "included": true
+        }
+      ],
+      "included": 5,
+      "excluded": 0,
+      "mean_decode_ms": 5.88,
+      "mean_fps": 137.6
+    },
+    "fragment-first": {
+      "all_samples": [
+        {
+          "time": 1791777487.814424,
+          "target_mbps": 1125,
+          "decode_ms": 6.3,
+          "fps": 132,
+          "p50_ms": 20.6,
+          "included": true
+        },
+        {
+          "time": 1791777493.971627,
+          "target_mbps": 1125,
+          "decode_ms": 6.6,
+          "fps": 139,
+          "p50_ms": 18.8,
+          "included": true
+        },
+        {
+          "time": 1791777500.1003861,
+          "target_mbps": 1125,
+          "decode_ms": 7.5,
+          "fps": 132,
+          "p50_ms": 19.7,
+          "included": true
+        },
+        {
+          "time": 1791777506.353952,
+          "target_mbps": 1125,
+          "decode_ms": 6.6,
+          "fps": 137,
+          "p50_ms": 17.6,
+          "included": true
+        },
+        {
+          "time": 1791777512.519234,
+          "target_mbps": 1125,
+          "decode_ms": 6.2,
+          "fps": 137,
+          "p50_ms": 17.2,
+          "included": true
+        }
+      ],
+      "included": 5,
+      "excluded": 0,
+      "mean_decode_ms": 6.64,
+      "mean_fps": 135.4
+    },
+    "compute-repeat": {
+      "all_samples": [
+        {
+          "time": 1791777635.513691,
+          "target_mbps": 889,
+          "decode_ms": 5.1,
+          "fps": 140,
+          "p50_ms": 15.2,
+          "included": false
+        },
+        {
+          "time": 1791777641.716556,
+          "target_mbps": 1004,
+          "decode_ms": 6.1,
+          "fps": 137,
+          "p50_ms": 15.9,
+          "included": false
+        },
+        {
+          "time": 1791777647.9679449,
+          "target_mbps": 1066,
+          "decode_ms": 5.8,
+          "fps": 137,
+          "p50_ms": 16.1,
+          "included": false
+        },
+        {
+          "time": 1791777654.2087722,
+          "target_mbps": 1125,
+          "decode_ms": 5.7,
+          "fps": 134,
+          "p50_ms": 16.2,
+          "included": true
+        },
+        {
+          "time": 1791777660.359466,
+          "target_mbps": 1125,
+          "decode_ms": 6.0,
+          "fps": 139,
+          "p50_ms": 16.5,
+          "included": true
+        }
+      ],
+      "included": 2,
+      "excluded": 3,
+      "mean_decode_ms": 5.85,
+      "mean_fps": 136.5
+    },
+    "fragment-repeat": {
+      "all_samples": [
+        {
+          "time": 1791777779.477704,
+          "target_mbps": 1125,
+          "decode_ms": 6.7,
+          "fps": 136,
+          "p50_ms": 18.9,
+          "included": true
+        },
+        {
+          "time": 1791777785.695592,
+          "target_mbps": 1125,
+          "decode_ms": 6.6,
+          "fps": 137,
+          "p50_ms": 18.7,
+          "included": true
+        },
+        {
+          "time": 1791777791.944445,
+          "target_mbps": 788,
+          "decode_ms": 6.7,
+          "fps": 136,
+          "p50_ms": 17.8,
+          "included": false
+        },
+        {
+          "time": 1791777798.106862,
+          "target_mbps": 837,
+          "decode_ms": 6.8,
+          "fps": 137,
+          "p50_ms": 18.0,
+          "included": false
+        },
+        {
+          "time": 1791777804.3352299,
+          "target_mbps": 945,
+          "decode_ms": 6.3,
+          "fps": 138,
+          "p50_ms": 17.8,
+          "included": false
+        }
+      ],
+      "included": 2,
+      "excluded": 3,
+      "mean_decode_ms": 6.65,
+      "mean_fps": 136.5
+    }
+  },
+  "combined": {
+    "compute": {
+      "samples": 7,
+      "mean_decode_ms": 5.871428571428572,
+      "mean_fps": 137.28571428571428,
+      "mean_p50_ms": 17.4
+    },
+    "fragment": {
+      "samples": 7,
+      "mean_decode_ms": 6.642857142857142,
+      "mean_fps": 135.71428571428572,
+      "mean_p50_ms": 18.785714285714285
+    }
+  },
+  "visual_confirmation_fragment": "Looks correct",
+  "final_path": "compute (driver default; override cleared)",
+  "fragment_extra_decode_time_pct": 13.138686131386844
+}

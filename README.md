@@ -1,6 +1,10 @@
 # Punktfunk patches
 
-Private archive of tested Windows host and Android client fixes for reuse after official updates. Upstream: [unom/punktfunk](https://git.unom.io/unom/punktfunk). This repository does not publish or modify the upstream project.
+Archive of tested Windows host and Android client fixes for reuse after official updates. Upstream: [unom/punktfunk](https://git.unom.io/unom/punktfunk). This repository does not publish or modify the upstream project.
+
+## Tested Turnip client — October 12, 2026
+
+The [Adreno 829 experiment archive](patchsets/turnip-a829-2026-10-12/) records the tested Mesa driver, client patches, build instructions and performance/corruption comparisons. Its matching GitHub release contains the final personal APK, driver ZIP and experiment evidence. This client uses an app-local driver; it does not replace Android’s system driver.
 
 ## Windows host patchset
 
@@ -8,7 +12,7 @@ Private archive of tested Windows host and Android client fixes for reuse after 
 
 The patch makes the virtual-display keepalive worker interruptible, skips the video drain when a session is stopped, waits for complete session teardown instead of an unconditional 1.5-second handoff delay, and bounds silent Windows audio reads to 100 ms so the audio sender notices stop promptly. The existing 1.5-second maximum handoff grace is retained. No driver source is changed.
 
-The patch and checksums are attached to the matching GitHub release. The built executable and APKs are not published here: they are unsigned or debug-signed personal builds, and each `SHA256SUMS` lists the checksum of the build that was tested. Build your own from the patches with the commands below. Keep binaries out of Git history.
+The patch and checksums are attached to the matching GitHub release. For this older host patchset, the built executable and APKs are not published here: they are unsigned or debug-signed personal builds, and each `SHA256SUMS` lists the checksum of the build that was tested. Build your own from the patches with the commands below. Keep binaries out of Git history.
 
 ## Backlog
 

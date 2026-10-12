@@ -1,0 +1,43 @@
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index 3b0a78f67..4c6e10d43 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -78,8 +78,8 @@ mod imp {
+                 _ => None,
+             },
+         );
+-        // `adb shell setprop debug.punktfunk.pyro_stats 1` logs the codec's GPU step timings.
+-        pf_client_core::video_pyrowave::set_gpu_stats(
++        // `debug.punktfunk.pyro_stats=1` enables the shared decoder's GPU step timings.
++        pf_client_video::video_pyrowave::set_gpu_stats(
+             crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1"),
+         );
+         PyroWaveDecoder::new(
+diff --git a/crates/client/pf-client-video/Cargo.toml b/crates/client/pf-client-video/Cargo.toml
+index cf178f70f..b22fb892a 100644
+--- a/crates/client/pf-client-video/Cargo.toml
++++ b/crates/client/pf-client-video/Cargo.toml
+@@ -17,9 +17,9 @@ anyhow = "1"
+ tracing = "0.1"
+ pyrowave-sys = { path = "../../codec/pyrowave-sys", optional = true }
+ ash = { workspace = true, optional = true }
++punktfunk-core = { path = "../../core/punktfunk-core" }
+ 
+ [target.'cfg(any(target_os = "linux", windows))'.dependencies]
+-punktfunk-core = { path = "../../core/punktfunk-core" }
+ # Native Vulkan Video decode (WP-C of the native-decode program, HEVC added by M3
+ # WP-2, AV1 by M7): auto's TOP rung on both desktop OSes since M9 — for every codec it
+ # speaks, AV1 included — also pinnable via `PUNKTFUNK_DECODER=native-vulkan` —
+diff --git a/crates/client/pf-client-video/src/lib.rs b/crates/client/pf-client-video/src/lib.rs
+index 76360b720..012c1dd8c 100644
+--- a/crates/client/pf-client-video/src/lib.rs
++++ b/crates/client/pf-client-video/src/lib.rs
+@@ -8,7 +8,7 @@
+ // Every `unsafe` block and `unsafe impl` in this crate carries a `// SAFETY:` proof.
+ 
+ // Decoder-input capture behind `PUNKTFUNK_DUMP_VIDEO`, written by the session pump.
+-#[cfg(desktop)]
++#[cfg(any(desktop, target_os = "android"))]
+ pub mod au_dump;
+ // The ladder. Every item is re-exported at the root, so `pf_client_core::video::X` is `X` here.
+ #[cfg(desktop)]

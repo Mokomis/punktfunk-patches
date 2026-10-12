@@ -1,0 +1,3 @@
+Mesa 745709a000482a4a24c91faef5c5a40bd653a863
+Build recipes 3d82e747a6ac00d88de921aa2969cdaa08ac78d4
+A8xx patches: patches/a8xx_gen8.patch; patches/a8xx_shared_mem.py:patches/a840v2.py

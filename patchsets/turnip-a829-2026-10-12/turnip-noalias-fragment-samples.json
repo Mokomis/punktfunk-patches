@@ -1,0 +1,61 @@
+[
+  {
+    "time": 1791765675.367914,
+    "texts": [
+      "player 1",
+      "2414\u00d71680@144 \u00b7 134 fps \u00b7 1033.6 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.4 ms p50 \u00b7 23.8 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.7 + decode 6.4",
+      "rtt 11.6 ms",
+      "audio buffer 42 ms \u00b7 a/v +50 ms",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765681.5762172,
+    "texts": [
+      "player 1",
+      "2414\u00d71680@144 \u00b7 135 fps \u00b7 1054.5 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 19.0 ms p50 \u00b7 25.1 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.0 + decode 6.9",
+      "rtt 11.6 ms",
+      "audio buffer 43 ms \u00b7 a/v +49 ms",
+      "skipped 2 (\u26a0 2 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765687.7198029,
+    "texts": [
+      "player 1",
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 1070.5 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 19.0 ms p50 \u00b7 24.8 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.0 + decode 6.7",
+      "rtt 11.3 ms",
+      "audio buffer 44 ms \u00b7 a/v +49 ms",
+      "skipped 1 (\u26a0 1 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765693.893471,
+    "texts": [
+      "player 1",
+      "2414\u00d71680@144 \u00b7 134 fps \u00b7 1047.8 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.9 ms p50 \u00b7 23.7 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.9 + decode 6.5",
+      "rtt 11.3 ms",
+      "audio buffer 42 ms \u00b7 a/v +49 ms",
+      "skipped 2 (\u26a0 2 overflow)",
+      "Link 800 Mbit/s, not measured yet",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791765700.053319,
+    "texts": []
+  }
+]

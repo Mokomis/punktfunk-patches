@@ -1,0 +1,19 @@
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+@@ -301,7 +301,15 @@
+ 	cmd.set_specialization_constant_mask(0);
+ 	cmd.enable_subgroup_size_control(true);
+ 
+-	if (device->supports_subgroup_size_log2(true, 4, 7))
++	// Plane replay on Adreno 829 matches Qualcomm only with 64-lane dequant
++	// subgroups. Keep this workaround limited to the tested Turnip device.
++	if (device->get_device_features().driver_id == VK_DRIVER_ID_MESA_TURNIP &&
++	    device->get_gpu_properties().deviceID == 0x44030a20 &&
++	    device->supports_subgroup_size_log2(true, 6, 6))
++	{
++		cmd.set_subgroup_size_log2(true, 6, 6);
++	}
++	else if (device->supports_subgroup_size_log2(true, 4, 7))
+ 	{
+ 		cmd.set_subgroup_size_log2(true, 4, 7);
+ 	}

@@ -1,0 +1,1319 @@
+diff --git a/clients/android/app/build.gradle.kts b/clients/android/app/build.gradle.kts
+index 818bda63e..f59fb7084 100644
+--- a/clients/android/app/build.gradle.kts
++++ b/clients/android/app/build.gradle.kts
+@@ -103,7 +103,7 @@ android {
+     }
+     packaging {
+         jniLibs {
+-            useLegacyPackaging = false
++            useLegacyPackaging = true
+         }
+     }
+ }
+diff --git a/clients/android/kit/build.gradle.kts b/clients/android/kit/build.gradle.kts
+index 2949cf6b0..f99eb906d 100644
+--- a/clients/android/kit/build.gradle.kts
++++ b/clients/android/kit/build.gradle.kts
+@@ -26,7 +26,7 @@ android {
+         sourceCompatibility = JavaVersion.VERSION_21
+         targetCompatibility = JavaVersion.VERSION_21
+     }
+-    packaging { jniLibs { useLegacyPackaging = false } } // 16 KB-page friendly
++    packaging { jniLibs { useLegacyPackaging = true } } // AdrenoTools hooks need extracted native libraries
+ }
+ 
+ kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_21) } }
+@@ -219,6 +219,13 @@ fun registerCargoNdk(taskName: String, release: Boolean) =
+         // cargo-ndk only adds to jniLibs. Empty it first, so no library an older tree built ships.
+         val jniLibs = file("src/main/jniLibs")
+         doFirst { jniLibs.deleteRecursively() }
++        // Restore the diagnostic driver after cargo clears its generated library folder.
++        doLast {
++            copy {
++                from("src/turnipJniLibs")
++                into(jniLibs)
++            }
++        }
+         cargoNdkEnvironment()
+         // Resolve cargo by ABSOLUTE path: Gradle's Exec resolves command[0] via the JVM's
+         // inherited PATH, NOT the environment("PATH", …) set above (that only reaches the spawned
+diff --git a/clients/android/native/src/pyro/device.rs b/clients/android/native/src/pyro/device.rs
+index 00a32525f..a436125f6 100644
+--- a/clients/android/native/src/pyro/device.rs
++++ b/clients/android/native/src/pyro/device.rs
+@@ -16,6 +16,54 @@ use ash::vk;
+ use pf_client_video::video_vk::{QueueLock, VulkanDecodeDevice};
+ use std::ffi::CString;
+ 
++/// Keep AdrenoTools and its Vulkan namespace live for the process.
++/// Driver selection is diagnostic and takes effect after restarting the app.
++fn load_entry() -> Result<ash::Entry> {
++    if crate::sys::sysprop(c"debug.punktfunk.vulkan_driver").as_deref() != Some("turnip") {
++        // SAFETY: Entry owns the system loader until its Vulkan objects are destroyed.
++        return unsafe { ash::Entry::load() }.map_err(|e| anyhow!("load system Vulkan: {e}"));
++    }
++    static TURNIP: std::sync::OnceLock<std::result::Result<ash::StaticFn, String>> =
++        std::sync::OnceLock::new();
++    let functions = TURNIP.get_or_init(|| {
++        (|| -> Result<ash::StaticFn> {
++            let maps = std::fs::read_to_string("/proc/self/maps")?;
++            let library = maps.lines()
++                .filter_map(|line| line.split_whitespace().last())
++                .find(|path| path.ends_with("/libpunktfunk_android.so"))
++                .ok_or_else(|| anyhow!("find extracted Android native library directory"))?;
++            let directory = std::path::Path::new(library).parent()
++                .ok_or_else(|| anyhow!("native library directory"))?;
++            let tools = CString::new(directory.join("libadrenotools.so").to_string_lossy().as_bytes())?;
++            let directory = CString::new(format!("{}/", directory.display()))?;
++            type Open = unsafe extern "C" fn(i32, i32, *const libc::c_char,
++                *const libc::c_char, *const libc::c_char, *const libc::c_char,
++                *const libc::c_char, *mut *mut libc::c_void) -> *mut libc::c_void;
++            // SAFETY: bundled libraries are in the app's extracted native directory. Both
++            // handles stay open for the process, outliving every Entry and Vulkan object.
++            unsafe {
++                let handle = libc::dlopen(tools.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
++                if handle.is_null() { bail!("load bundled AdrenoTools"); }
++                let symbol = libc::dlsym(handle, c"adrenotools_open_libvulkan".as_ptr());
++                if symbol.is_null() { bail!("resolve AdrenoTools Vulkan entry point"); }
++                let open: Open = std::mem::transmute(symbol);
++                let loader = open(libc::RTLD_NOW | libc::RTLD_LOCAL, 1, std::ptr::null(),
++                    directory.as_ptr(), directory.as_ptr(), c"libvulkan_freedreno.so".as_ptr(),
++                    std::ptr::null(), std::ptr::null_mut());
++                if loader.is_null() { bail!("open bundled Turnip Vulkan loader"); }
++                let symbol = libc::dlsym(loader, c"vkGetInstanceProcAddr".as_ptr());
++                if symbol.is_null() { bail!("resolve Turnip vkGetInstanceProcAddr"); }
++                Ok(ash::StaticFn { get_instance_proc_addr: std::mem::transmute(symbol) })
++            }
++        })().map_err(|error| error.to_string())
++    });
++    match functions {
++        // SAFETY: the process-owned loader and function pointer outlive the Entry.
++        Ok(functions) => Ok(unsafe { ash::Entry::from_static_fn(functions.clone()) }),
++        Err(error) => bail!("load Turnip: {error}"),
++    }
++}
++
+ /// Instance extensions, in creation order. `VulkanDecodeDevice::instance_extensions` must
+ /// list exactly these — pyrowave replays them and a mismatch is a wrong answer, not an error.
+ const INSTANCE_EXTS: [&std::ffi::CStr; 3] = [ash::khr::surface::NAME, ash::khr::android_surface::NAME, ash::ext::swapchain_colorspace::NAME];
+@@ -70,10 +118,19 @@ struct FeatureProbe {
+     name: String,
+ }
+ 
+-/// Read the pyrowave feature set off `pdev`. Pure queries; no device is created.
++/// Read driver identity and apply diagnostic feature limits before device creation.
+ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> FeatureProbe {
+     // SAFETY: read-only query; the returned struct is plain data.
+-    let props = unsafe { instance.get_physical_device_properties(pdev) };
++    let mut driver = vk::PhysicalDeviceDriverProperties::default();
++    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
++    // SAFETY: the property chain is live for this read-only physical-device query.
++    unsafe { instance.get_physical_device_properties2(pdev, &mut properties) };
++    let props = properties.properties;
++    log::info!("pyro: Vulkan driver id={:?} name={} info={}", driver.driver_id,
++        driver.driver_name_as_c_str().map(|s| s.to_string_lossy()).unwrap_or_default(),
++        driver.driver_info_as_c_str().map(|s| s.to_string_lossy()).unwrap_or_default());
++    let selected_driver_ok = crate::sys::sysprop(c"debug.punktfunk.vulkan_driver").as_deref()
++        != Some("turnip") || driver.driver_id == vk::DriverId::MESA_TURNIP;
+     let name = props
+         .device_name_as_c_str()
+         .map(|c| c.to_string_lossy().into_owned())
+@@ -87,7 +144,7 @@ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> Feature
+     unsafe { instance.get_physical_device_features2(pdev, &mut f2) };
+     // Copy before the chained structs are read: `f2` mutably borrows them.
+     let shader_int16 = f2.features.shader_int16;
+-    let ok = props.api_version >= vk::API_VERSION_1_3
++    let ok = selected_driver_ok && props.api_version >= vk::API_VERSION_1_3
+         && shader_int16 == vk::TRUE
+         && f12.storage_buffer8_bit_access == vk::TRUE
+         && f12.timeline_semaphore == vk::TRUE
+@@ -96,7 +153,8 @@ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> Feature
+         && f13.synchronization2 == vk::TRUE;
+     FeatureProbe {
+         ok,
+-        float16: f12.shader_float16 == vk::TRUE,
++        float16: f12.shader_float16 == vk::TRUE
++            && crate::sys::sysprop(c"debug.punktfunk.pyro_fp32").as_deref() != Some("1"),
+         api_version: props.api_version,
+         vendor_id: props.vendor_id,
+         name,
+@@ -131,8 +189,8 @@ fn create_instance(entry: &ash::Entry, with_surface: bool) -> Result<ash::Instan
+ /// bare instance — no surface, no logical device, no GPU work — so it is safe to call
+ /// before a session exists.
+ pub(crate) fn pyrowave_capable() -> bool {
+-    // SAFETY: the system Vulkan loader remains owned by Entry.
+-    let entry = match unsafe { ash::Entry::load() } {
++    // The diagnostic selector uses the same loader for capability and presentation.
++    let entry = match load_entry() {
+         Ok(e) => e,
+         Err(e) => {
+             log::info!("pyro: no Vulkan loader on this device ({e}) — PyroWave unavailable");
+@@ -296,13 +354,13 @@ impl PyroDevice {
+         })
+     }
+ 
+-    /// Load the loader, create the instance, and make a surface on `window`.
++    /// Select the diagnostic Vulkan driver and create its instance and window surface.
+     ///
+     /// Separate from [`PyroDevice::new`] because the surface must exist before a physical
+     /// device can be chosen (presentation support is a per-family property of the surface).
+     pub(super) fn open_surface(window: &ndk::native_window::NativeWindow) -> Result<WindowSurface> {
+-        // SAFETY: dlopens libvulkan.so; `Entry` owns the handle for the session.
+-        let entry = unsafe { ash::Entry::load() }.map_err(|e| anyhow!("no Vulkan loader: {e}"))?;
++        // Select the loader before creating any Vulkan instance or surface.
++        let entry = load_entry()?;
+         let instance = create_instance(&entry, true)?;
+         let android = ash::khr::android_surface::Instance::new(&entry, &instance);
+         let ci = vk::AndroidSurfaceCreateInfoKHR::default().window(window.ptr().as_ptr().cast());
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index f67865265..975a0a4ff 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -78,8 +78,8 @@ mod imp {
+                 _ => None,
+             },
+         );
+-        // `adb shell setprop debug.punktfunk.pyro_stats 1` logs the codec's GPU step timings.
+-        pf_client_core::video_pyrowave::set_gpu_stats(
++        // `debug.punktfunk.pyro_stats=1` enables the shared decoder's GPU step timings.
++        pf_client_video::video_pyrowave::set_gpu_stats(
+             crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1"),
+         );
+         PyroWaveDecoder::new(
+@@ -132,7 +132,9 @@ mod imp {
+         let dev = PyroDevice::new(PyroDevice::open_surface(window)?)?;
+         stats.set_decoder(&decoder_label(&dev.vkd.device_name), false);
+         let smooth = opts.present_priority == 1;
+-        let want_hdr = client.color.transfer == 16 && client.bit_depth >= 10;
++        // The diagnostic surface override leaves the stream and decode depth unchanged.
++        let want_hdr = client.color.transfer == 16 && client.bit_depth >= 10
++            && crate::sys::sysprop(c"debug.punktfunk.pyro_sdr_surface").as_deref() != Some("1");
+         let mut present = Present::new(&dev, smooth, want_hdr)?;
+ 
+         let mut mode = client.mode();
+@@ -163,6 +165,25 @@ mod imp {
+         let started = Instant::now();
+         let mut received: u64 = 0;
+         let mut warned_silent = false;
++        let mut decode_feedback_started = false;
++        let mut driver = ash::vk::PhysicalDeviceDriverProperties::default();
++        let mut properties = ash::vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
++        // SAFETY: the physical device belongs to the live instance; both output structs
++        // remain alive for the query. Their contents select only the CPU handoff path.
++        unsafe { dev.base.instance.get_physical_device_properties2(dev.pdev, &mut properties) };
++        let device_id = properties.properties.device_id;
++        let queued_default = driver.driver_id == ash::vk::DriverId::MESA_TURNIP
++            && device_id == 0x44030a20;
++        let queued_present = match crate::sys::sysprop(c"debug.punktfunk.pyro_queue_present").as_deref() {
++            Some("0") => false,
++            Some("1") => true,
++            _ => queued_default,
++        };
++        let handoff_stats = crate::sys::sysprop(c"debug.punktfunk.pyro_handoff_stats").as_deref() == Some("1");
++        log::info!("pyro: decode handoff={}", if queued_present { "queued-present" } else { "fence-first" });
++        let mut handoff_sum = [0u64; 7];
++        let mut handoff_window = Instant::now();
++        let mut handoff_frames = 0u32;
+ 
+         while !shutdown.load(Ordering::Relaxed) {
+             // Metadata is best-effort and latest-wins. Drain without delaying video; the host
+@@ -215,7 +236,7 @@ mod imp {
+ 
+             // Receipt stamp: core's reassembly-completion time, not the pull instant — a
+             // pull stamp folds this loop's own poll wait into "network".
+-            let want_stamps = stats.enabled() || measure_decode;
++            let want_stamps = stats.enabled() || measure_decode || handoff_stats;
+             let received_ns = if !want_stamps {
+                 0
+             } else if frame.received_ns > 0 {
+@@ -225,7 +246,15 @@ mod imp {
+             };
+ 
+             let aligned = frame.flags & punktfunk_core::packet::USER_FLAG_CHUNK_ALIGNED != 0;
+-            let decoded = match decoder.decode_frame(&frame.data, aligned, frame.complete) {
++            let decode_started = Instant::now();
++            let result = if queued_present {
++                // SAFETY: Present submits sampling on this decoder's queue on this thread,
++                // before another decode. Completion precedes reuse and latency publication.
++                unsafe { decoder.decode_frame_queued(&frame.data, aligned, frame.complete) }
++            } else {
++                decoder.decode_frame(&frame.data, aligned, frame.complete)
++            };
++            let decoded = match result {
+                 Ok(d) => d,
+                 Err(e) => {
+                     // Not recoverable by asking for anything: an intra-only frame that the
+@@ -244,20 +273,48 @@ mod imp {
+             let crop = crate::session::unpack_src_crop(
+                 opts.src_crop.load(std::sync::atomic::Ordering::Relaxed),
+             );
++            let present_started = Instant::now();
+             let shown = present.show(picture.views, crop, picture.color, depth, msb_packed)?;
++            let present_us = present_started.elapsed().as_micros() as u64;
++            decoder.finish_pending_decode()?;
++            if handoff_stats && shown {
++                let split = decoder.last_split();
++                let values = [split.parse_us as u64, split.record_us as u64,
++                    split.fence_wait_us as u64, split.gpu_us as u64, present_us,
++                    decode_started.elapsed().as_micros() as u64,
++                    crate::stats::sane_us(now_realtime_ns() - received_ns).unwrap_or(0)];
++                for (sum, value) in handoff_sum.iter_mut().zip(values) { *sum += value; }
++                handoff_frames += 1;
++                if handoff_frames == 600 {
++                    let avg = handoff_sum.map(|sum| sum as f64 / 600000.0);
++                    log::info!("pyro: handoff CPU avg_ms parse={:.3} record={:.3} fence_wait={:.3} observed_completion={:.3} present_submit={:.3} total={:.3} receipt_to_complete={:.3} queued={} fps={:.1} frames=600",
++                        avg[0], avg[1], avg[2], avg[3], avg[4], avg[5], avg[6], queued_present,
++                        600.0 / handoff_window.elapsed().as_secs_f64());
++                    handoff_sum = [0; 7];
++                    handoff_window = Instant::now();
++                    handoff_frames = 0;
++                }
++            }
+             if !shown {
+                 continue; // swapchain was out of date; it has been rebuilt
+             }
+ 
+-            // Presented. Stamped here rather than at a latch callback: this path has no
+-            // render-timestamp signal (that is the ASurfaceControl backend's), so the HUD
+-            // shows the capture→decoded headline and drops the `display` stage. Stamped
+-            // whatever the HUD state: the audio plane steers by `video_e2e`.
++            // Decode is complete and display is submitted. This timestamp feeds latency
++            // and audio alignment; physical display timing is unavailable in this backend.
+             let presented_ns = now_realtime_ns();
+             let offset = clock_offset.load(Ordering::Relaxed);
+             crate::stats::publish_e2e(&video_e2e, presented_ns, offset, frame.pts_ns);
++            let decode_us = crate::stats::sane_us(presented_ns - received_ns);
++            if measure_decode && frame.complete {
++                if let Some(us) = decode_us {
++                    client.report_decode_us(us.min(u32::MAX as u64) as u32);
++                    if !decode_feedback_started {
++                        log::info!("pyro: adaptive bitrate decode feedback active sample_us={us}");
++                        decode_feedback_started = true;
++                    }
++                }
++            }
+             if stats.enabled() {
+-                let decode_us = crate::stats::sane_us(presented_ns - received_ns);
+                 stats.note_decoded(frame.pts_ns, presented_ns, decode_us);
+             }
+         }
+diff --git a/crates/client/pf-client-video/src/video_pyrowave.rs b/crates/client/pf-client-video/src/video_pyrowave.rs
+index 5bc812617..84b667ccb 100644
+--- a/crates/client/pf-client-video/src/video_pyrowave.rs
++++ b/crates/client/pf-client-video/src/video_pyrowave.rs
+@@ -1,27 +1,15 @@
+-//! PyroWave client decode on the presenter's VkDevice: decode + CSC + present on one
+-//! device, no interop (design/pyrowave-codec-plan.md). One AU is one self-delimiting
+-//! packet: `push_packet` → ready → `decode_gpu_buffer` into our command buffer,
+-//! submitted under [`QueueLock`], fence-waited.
++//! PyroWave decode shares the presenter's Vulkan device and queue. Decode writes three
++//! Y′CbCr planes; the presenter samples them after a GPU memory barrier.
+ //!
+-//! Output is three planes the decode writes (storage images on the compute path, colour
+-//! attachments on the fragment path) and the presenter samples (Y full-res; Cb/Cr half-res, or full-res on 4:4:4;
+-//! R8, or R16 UNORM at 10-bit). Encoder RG packing is invalid here (`pyrowave.h`).
+-//! Colour comes from negotiated `ColorInfo`; the bitstream has no VUI. A plane-set
+-//! ring keeps decode from overwriting a set the presenter still samples.
++//! The default decode call waits for GPU completion. The same-queue variant returns
++//! pending planes so a caller can submit display work before waiting for completion.
++//! Every following decode or resize waits before reusing decoder buffers.
+ //!
+-//! pyrowave 0.4.0 needs instance/device create-infos alive for the shared device.
+-//! The presenter does not pin its originals, so [`Hold`] reconstructs content-equivalent
+-//! ones from [`VulkanDecodeDevice`]. Pointer identity is not required.
++//! Plane rings retain images across frame handovers and mid-stream resizing. Retired
++//! rings wait for enough handovers and a queue-idle boundary before release.
+ //!
+-//! The decoder object is fixed-size. [`au_dims`] sniffs each frame's sequence header
+-//! and [`PyroWaveDecoder::reconfigure`] rebuilds decoder + plane ring in place; device,
+-//! command pool and pinned create-infos survive. A frame holds its ring ([`PlaneRing`]);
+-//! a superseded ring is also retired for consumers that sample without holding the frame
+-//! (see [`RETIRE_HANDOVERS`]).
+-//!
+-//! Decoder invariants every method's SAFETY leans on: `device` is the presenter's live
+-//! device, which outlives the decoder; `pw_dev`, `pw_dec`, the rings, `cmd` and `fence`
+-//! are this decoder's own; the shared queue is touched only under `queue_lock`.
++//! The device outlives the decoder. Pinned create infos support PyroWave's shared-device
++//! wrapper; all queue access holds [`QueueLock`].
+ 
+ use crate::video_color::ColorDesc;
+ use crate::video_vk::{QueueLock, VulkanDecodeDevice};
+@@ -254,7 +242,7 @@ unsafe extern "C" fn queue_unlock_cb(ud: *mut c_void) {
+     unsafe { (*(ud as *const QueueLock)).unlock() }
+ }
+ 
+-/// Fence-waited decode output on the presenter's device, GENERAL layout.
++/// Decode output on the shared device in GENERAL layout; queued output can be pending.
+ pub struct PyroWavePlanarFrame {
+     /// Keeps the planes alive past a resize or the decoder's end. A consumer that may
+     /// sample the frame again holds the frame.
+@@ -482,6 +470,7 @@ pub struct PyroWaveDecoder {
+     cmd_pool: vk::CommandPool,
+     cmd: vk::CommandBuffer,
+     fence: vk::Fence,
++    pending_decode: Option<Instant>,
+     mem_props: vk::PhysicalDeviceMemoryProperties,
+     width: u32,
+     height: u32,
+@@ -513,8 +502,10 @@ pub struct DecodeSplit {
+     pub parse_us: u32,
+     /// Command recording, payload upload included (CPU).
+     pub record_us: u32,
+-    /// Submit to fence: the GPU's own time plus whatever queued ahead of it.
++    /// Submit until CPU-observed completion, including queued work and observation delay.
+     pub gpu_us: u32,
++    /// CPU time blocked on the decode fence.
++    pub fence_wait_us: u32,
+ }
+ 
+ // SAFETY: used only from the single decode thread; the shared-queue accesses go through
+@@ -544,8 +535,8 @@ impl PyroWaveDecoder {
+ 
+     /// # Safety
+     ///
+-    /// `vkd`'s handles are the presenter's live instance and device, and they outlive
+-    /// the decoder.
++    /// The presenter keeps `vkd`'s instance, device and shared queue alive until this
++    /// decoder and all frames using its plane rings have been released.
+     unsafe fn new_inner(
+         vkd: &VulkanDecodeDevice,
+         width: u32,
+@@ -733,6 +724,7 @@ impl PyroWaveDecoder {
+             cmd_pool,
+             cmd,
+             fence,
++            pending_decode: None,
+             mem_props,
+             width,
+             height,
+@@ -747,11 +739,10 @@ impl PyroWaveDecoder {
+         })
+     }
+ 
+-    /// Rebuild decoder + plane ring at new dimensions. Device, command pool, fence and
+-    /// pinned create-infos are dimension-independent and survive. Build-new-before-drop-old:
+-    /// failure leaves the current decoder untouched. The old ring is retired, not
+-    /// destroyed (see [`RETIRE_HANDOVERS`]).
++    /// Completes pending decode before rebuilding the decoder and plane ring. New resources
++    /// are built before replacement; old planes remain retired across presenter handovers.
+     fn reconfigure(&mut self, width: u32, height: u32) -> Result<()> {
++        self.finish_pending_decode()?;
+         if !self.chroma444 && (width % 2 != 0 || height % 2 != 0) {
+             bail!("pyrowave 4:2:0 needs even dimensions (resize to {width}x{height})");
+         }
+@@ -926,15 +917,54 @@ impl PyroWaveDecoder {
+         lines
+     }
+ 
+-    /// One AU in → one frame out. `aligned`: shard-window chunked (each `wire_window`
+-    /// holds whole self-delimiting packets, zero-padded). `complete`: every shard arrived;
+-    /// a partial still decodes — missing blocks are localized blur for this frame only.
++    /// Decodes an access unit and waits for the output planes to finish.
+     pub fn decode_frame(
+         &mut self,
+         au: &[u8],
+         aligned: bool,
+         complete: bool,
+     ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.decode_frame_inner(au, aligned, complete, false)
++    }
++
++    /// Submits decode without blocking display command recording on its fence.
++    ///
++    /// # Safety
++    /// Any sampling of returned planes uses this decoder's queue after this call and
++    /// before the next decode. The decode's memory barrier protects that sampling.
++    /// Host reads first call [`Self::finish_pending_decode`].
++    pub unsafe fn decode_frame_queued(
++        &mut self,
++        au: &[u8],
++        aligned: bool,
++        complete: bool,
++    ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.decode_frame_inner(au, aligned, complete, true)
++    }
++
++    /// Completes a submitted decode before buffer reuse or CPU latency publication.
++    pub fn finish_pending_decode(&mut self) -> Result<()> {
++        let Some(submitted) = self.pending_decode else { return Ok(()); };
++        let wait_started = Instant::now();
++        // SAFETY: the fence belongs to the pending decode submit and is not reset until
++        // completion. A timeout leaves it pending for teardown or a later wait.
++        unsafe { self.device.wait_for_fences(&[self.fence], true, 5_000_000_000) }
++            .context("pyrowave decode fence")?;
++        self.split.fence_wait_us = wait_started.elapsed().as_micros() as u32;
++        self.split.gpu_us = submitted.elapsed().as_micros() as u32;
++        self.pending_decode = None;
++        Ok(())
++    }
++
++    fn decode_frame_inner(
++        &mut self,
++        au: &[u8],
++        aligned: bool,
++        complete: bool,
++        queued: bool,
++    ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.finish_pending_decode()?;
++        self.split = DecodeSplit::default();
+         // The AU's sequence header announces a host mode switch; rebuild first — a size
+         // mismatch hard-errors upstream. A lost first shard sniffs `None` and decodes at
+         // the current size; the next complete frame carries the header again.
+@@ -977,7 +1007,7 @@ impl PyroWaveDecoder {
+ 
+         let slot = self.next;
+         self.next = (self.next + 1) % RING;
+-        if let Err(e) = self.record_and_wait(slot) {
++        if let Err(e) = self.record_and_submit(slot, queued) {
+             // The buffer may still be recording or on the GPU, and the pump keeps this decoder:
+             // idle the queue, then reset the buffer so the next frame can begin on it.
+             let _guard = self.queue_lock.guard();
+@@ -985,6 +1015,7 @@ impl PyroWaveDecoder {
+             // pool) is not pending, so it can be reset.
+             unsafe {
+                 let _ = self.device.queue_wait_idle(self.queue);
++                self.pending_decode = None;
+                 let _ = self
+                     .device
+                     .reset_command_buffer(self.cmd, vk::CommandBufferResetFlags::empty());
+@@ -1016,9 +1047,9 @@ impl PyroWaveDecoder {
+         }))
+     }
+ 
+-    /// Record `slot`'s decode, submit it, and wait for its fence. On `Err` the command buffer
+-    /// may be recording or pending; the caller idles the queue before reusing it.
+-    fn record_and_wait(&mut self, slot: usize) -> Result<()> {
++    /// Records and submits one decode. A queued caller finishes after submitting display;
++    /// the default caller finishes here. Errors idle the queue before command-buffer reuse.
++    fn record_and_submit(&mut self, slot: usize, queued: bool) -> Result<()> {
+         let record_started = Instant::now();
+         let dev = self.device.clone();
+         // SAFETY: `cmd` is this decoder's and idle: the last submit's fence was waited, or
+@@ -1194,19 +1225,18 @@ impl PyroWaveDecoder {
+                 )
+             }?;
+         }
+-        // SAFETY: `fence` is this decoder's, named by the submit above.
+-        unsafe { dev.wait_for_fences(&[self.fence], true, 5_000_000_000) }
+-            .context("pyrowave decode fence")?;
+-        self.split.gpu_us = gpu_started.elapsed().as_micros() as u32;
++        self.pending_decode = Some(gpu_started);
++        if !queued {
++            self.finish_pending_decode()?;
++        }
+         Ok(())
+     }
+ }
+ 
+ impl Drop for PyroWaveDecoder {
+     fn drop(&mut self) {
+-        // SAFETY: owned handles on the presenter's device. Decode is fence-synchronous so
+-        // none of our work is in flight; the presenter may still sample the last slot —
+-        // idle the shared queue under the lock before destroying plane images.
++        // SAFETY: all handles belong to this decoder. Queue idle covers pending decode
++        // and presenter sampling before buffers, fences and plane images are destroyed.
+         unsafe {
+             {
+                 let _guard = self.queue_lock.guard();
+diff --git a/crates/codec/pyrowave-sys/build.rs b/crates/codec/pyrowave-sys/build.rs
+index 219fe64e0..40a8ebf38 100644
+--- a/crates/codec/pyrowave-sys/build.rs
++++ b/crates/codec/pyrowave-sys/build.rs
+@@ -99,6 +99,7 @@ fn main() {
+         println!("cargo:rustc-link-lib=dylib=pthread");
+     }
+     if target_os == "android" {
++        println!("cargo:rustc-link-lib=dylib=log");
+         // STATIC libc++ so the client `.so` stays self-contained, and unprefixed (not
+         // `static=`) because the archives live in the NDK sysroot, which rustc does not
+         // search — the name is passed through for the NDK's clang. Same spelling
+diff --git a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+index 45cc9bc9c..52cf6de23 100644
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+@@ -6,7 +6,12 @@
+ #include "image.hpp"
+ #include "math.hpp"
+ #include "pyrowave_common.hpp"
++#include "shaders/idwt_a829.hpp"
+ #include <algorithm>
++#ifdef __ANDROID__
++#include <android/log.h>
++#include <sys/system_properties.h>
++#endif
+ 
+ namespace PyroWave
+ {
+@@ -23,6 +28,7 @@ struct DequantizerPushData
+ 
+ struct Decoder::Impl final : public WaveletBuffers
+ {
++	Program *idwt_program = nullptr;
+ 	BufferHandle dequant_offset_buffer, payload_data;
+ 	BufferViewHandle payload_u32_view, payload_u16_view, payload_u8_view;
+ 
+@@ -298,7 +304,15 @@ bool Decoder::Impl::dequant(CommandBuffer &cmd)
+ 	cmd.set_specialization_constant_mask(0);
+ 	cmd.enable_subgroup_size_control(true);
+ 
+-	if (device->supports_subgroup_size_log2(true, 4, 7))
++	// Plane replay on Adreno 829 matches Qualcomm only with 64-lane dequant
++	// subgroups. Keep this workaround limited to the tested Turnip device.
++	if (device->get_device_features().driver_id == VK_DRIVER_ID_MESA_TURNIP &&
++	    device->get_gpu_properties().deviceID == 0x44030a20 &&
++	    device->supports_subgroup_size_log2(true, 6, 6))
++	{
++		cmd.set_subgroup_size_log2(true, 6, 6);
++	}
++	else if (device->supports_subgroup_size_log2(true, 4, 7))
+ 	{
+ 		cmd.set_subgroup_size_log2(true, 4, 7);
+ 	}
+@@ -712,7 +726,30 @@ bool Decoder::Impl::idwt_fragment(CommandBuffer &cmd, const ViewBuffers &views)
+ 
+ bool Decoder::Impl::idwt(CommandBuffer &cmd, const ViewBuffers &views)
+ {
+-	cmd.set_program(shaders.idwt[Configuration::get().get_precision()]);
++	if (!idwt_program)
++	{
++		const auto precision = Configuration::get().get_precision();
++		idwt_program = shaders.idwt[precision];
++		bool optimized = precision == 1 &&
++		    device->get_device_features().driver_id == VK_DRIVER_ID_MESA_TURNIP &&
++		    device->get_gpu_properties().deviceID == 0x44030a20;
++#ifdef __ANDROID__
++		char baseline[PROP_VALUE_MAX] = {};
++		__system_property_get("debug.punktfunk.pyro_recon_baseline", baseline);
++		optimized = optimized && baseline[0] != '1';
++#endif
++		if (optimized)
++		{
++			// Bindings and push constants match the standard reconstruction shader.
++			const auto &layout = idwt_program->get_shader(ShaderStage::Compute)->get_layout();
++			idwt_program = device->request_program(idwt_a829_spirv, sizeof(idwt_a829_spirv), &layout);
++		}
++#ifdef __ANDROID__
++		__android_log_print(ANDROID_LOG_INFO, "punktfunk", "pyro: reconstruction=%s",
++		                    optimized ? "a829-packed-apron8" : "standard");
++#endif
++	}
++	cmd.set_program(idwt_program);
+ 	cmd.enable_subgroup_size_control(false);
+ 
+ 	auto start_idwt = cmd.write_timestamp(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+@@ -942,6 +979,16 @@ bool Decoder::device_prefers_fragment_path(Vulkan::Device &device)
+ 
+ void Decoder::Impl::check_linear_texture_support()
+ {
++#ifdef __ANDROID__
++	// The diagnostic switch keeps the existing texel-buffer fallback active.
++	char no_linear[PROP_VALUE_MAX] = {};
++	__system_property_get("debug.punktfunk.pyro_no_linear", no_linear);
++	if (no_linear[0] == '1' && no_linear[1] == '\0')
++	{
++		LOGI("PyroWave: linear texture aliases disabled for diagnostic test.\n");
++		return;
++	}
++#endif
+ 	if (!use_readonly_texel_buffer)
+ 		return;
+ 
+diff --git a/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/dwt_common.h b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/dwt_common.h
+index 06b773eef..ce27d4e3f 100644
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/dwt_common.h
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/dwt_common.h
+@@ -22,7 +22,7 @@ const int BLOCK_SIZE_HALF = BLOCK_SIZE >> 1;
+ #define FLOAT float
+ #define VEC2 vec2
+ #define VEC4 vec4
+-#if FP16
++#if FP16 && !defined(IDWT_PACKED_SHARED)
+ #define SHARED_VEC2 f16vec2
+ #else
+ #define SHARED_VEC2 uint
+@@ -42,7 +42,7 @@ const FLOAT K = FLOAT(1.230174104914001);
+ const FLOAT inv_K = FLOAT(1.0 / 1.230174104914001);
+ 
+ shared SHARED_VEC2 shared_block[(BLOCK_SIZE + 2 * APRON) / 2][(BLOCK_SIZE + 2 * APRON) + 1];
+-#if !FP16 && PRECISION == 1
++#if PRECISION == 1 && (!FP16 || defined(IDWT_PACKED_SHARED))
+ VEC2 load_shared(uint y, uint x) { return unpackHalf2x16(shared_block[y][x]); }
+ void store_shared(uint y, uint x, VEC2 v) { shared_block[y][x] = packHalf2x16(v); }
+ #else
+diff --git a/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/idwt.comp b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/idwt.comp
+index d6847aff6..2001d5da3 100644
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/idwt.comp
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/idwt.comp
+@@ -9,6 +9,10 @@
+ layout(local_size_x = 64) in;
+ layout(constant_id = 0) const bool DCShift = false;
+ 
++#ifndef IDWT_APRON_WIDTH
++#define IDWT_APRON_WIDTH 4
++#endif
++
+ uint local_index;
+ 
+ #include "dwt_common.h"
+@@ -126,14 +130,16 @@ void inverse_transform8x2()
+     }
+ }
+ 
+-void inverse_transform4x2(bool active_lane, int y_offset)
++void inverse_transform_apron(bool active_lane, int y_offset)
+ {
+-    const int SIZE = 4;
++    const int SIZE = IDWT_APRON_WIDTH;
+     const int PADDED_SIZE = SIZE + 2 * APRON;
+     const int PADDED_SIZE_HALF = PADDED_SIZE / 2;
+     VEC2 values[PADDED_SIZE];
+ 
+-    ivec2 local_coord = ivec2(4 * (local_index % 8u), local_index / 8u + y_offset);
++    const uint GROUPS_PER_ROW = uint(BLOCK_SIZE / SIZE);
++    ivec2 local_coord = ivec2(uint(SIZE) * (local_index % GROUPS_PER_ROW),
++                            local_index / GROUPS_PER_ROW + y_offset);
+ 
+     if (active_lane)
+     {
+@@ -146,7 +152,6 @@ void inverse_transform4x2(bool active_lane, int y_offset)
+         }
+ 
+         // CDF 9/7 lifting steps.
+-        // Arith go brrr.
+         for (int i = 2; i < PADDED_SIZE - 1; i += 2)
+             values[i] -= DELTA * (values[i - 1] + values[i + 1]);
+         for (int i = 3; i < PADDED_SIZE - 2; i += 2)
+@@ -188,8 +193,8 @@ void main()
+     // Horizontal transform.
+     inverse_transform8x2();
+ 
+-    // Also need to transform the apron.
+-    inverse_transform4x2(local_index < 32, BLOCK_SIZE_HALF);
++    // Apron lanes cover the same rows with SIZE-wide lifting segments.
++    inverse_transform_apron(local_index < uint(4 * BLOCK_SIZE / IDWT_APRON_WIDTH), BLOCK_SIZE_HALF);
+ 
+     barrier();
+ 
+--- /dev/null
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/build_idwt_a829.py
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python3
++"""Build the A829 reconstruction variant without changing the default shader bank."""
++from pathlib import Path
++import struct
++import subprocess
++import tempfile
++
++here = Path(__file__).resolve().parent
++with tempfile.TemporaryDirectory(prefix="idwt-a829-") as scratch:
++    scratch = Path(scratch)
++    source = scratch / "idwt.comp"
++    source.write_text((here / "idwt.comp").read_text().replace(
++        "#version 450", "#version 450\n#extension GL_GOOGLE_include_directive : require"))
++    raw, optimized = scratch / "raw.spv", scratch / "optimized.spv"
++    subprocess.run(["glslangValidator", "-V", "--target-env", "vulkan1.1", "-S", "comp",
++                    "-DFP16=1", "-DPRECISION=1", "-DIDWT_PACKED_SHARED=1",
++                    "-DIDWT_APRON_WIDTH=8", "-I" + str(here), str(source), "-o", str(raw)], check=True)
++    subprocess.run(["spirv-opt", "-O", "--strip-debug", str(raw), "-o", str(optimized)], check=True)
++    subprocess.run(["spirv-val", "--target-env", "vulkan1.1", str(optimized)], check=True)
++    blob = optimized.read_bytes()
++    words = struct.unpack("<" + "I" * (len(blob) // 4), blob)
++    lines = ["// Generated by build_idwt_a829.py; do not edit.", "#pragma once", "#include <stdint.h>",
++             "namespace PyroWave {", "static const uint32_t idwt_a829_spirv[] = {"]
++    for i in range(0, len(words), 8):
++        lines.append("    " + ", ".join(f"0x{v:08x}u" for v in words[i:i + 8]) + ",")
++    lines.extend(["};", "}"])
++    (here / "idwt_a829.hpp").write_text("\n".join(lines) + "\n")
+--- /dev/null
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/shaders/idwt_a829.hpp
+@@ -0,0 +1,589 @@
++// Generated by build_idwt_a829.py; do not edit.
++#pragma once
++#include <stdint.h>
++namespace PyroWave {
++static const uint32_t idwt_a829_spirv[] = {
++    0x07230203u, 0x00010300u, 0x0008000bu, 0x00000ec0u, 0x00000000u, 0x00020011u, 0x00000001u, 0x00020011u,
++    0x00000038u, 0x0006000bu, 0x00000001u, 0x4c534c47u, 0x6474732eu, 0x3035342eu, 0x00000000u, 0x0003000eu,
++    0x00000000u, 0x00000001u, 0x0007000fu, 0x00000005u, 0x00000004u, 0x6e69616du, 0x00000000u, 0x00000142u,
++    0x0000040bu, 0x00060010u, 0x00000004u, 0x00000011u, 0x00000040u, 0x00000001u, 0x00000001u, 0x00030047u,
++    0x00000094u, 0x00000002u, 0x00050048u, 0x00000094u, 0x00000000u, 0x00000023u, 0x00000000u, 0x00050048u,
++    0x00000094u, 0x00000001u, 0x00000023u, 0x00000008u, 0x00040047u, 0x00000142u, 0x0000000bu, 0x0000001au,
++    0x00030047u, 0x0000015cu, 0x00000000u, 0x00040047u, 0x0000015cu, 0x00000021u, 0x00000000u, 0x00040047u,
++    0x0000015cu, 0x00000022u, 0x00000000u, 0x00040047u, 0x0000040bu, 0x0000000bu, 0x0000001du, 0x00040047u,
++    0x00000436u, 0x00000001u, 0x00000000u, 0x00030047u, 0x0000043fu, 0x00000000u, 0x00030047u, 0x0000043fu,
++    0x00000019u, 0x00040047u, 0x0000043fu, 0x00000021u, 0x00000001u, 0x00040047u, 0x0000043fu, 0x00000022u,
++    0x00000000u, 0x00030047u, 0x00000440u, 0x00000000u, 0x00030047u, 0x0000044eu, 0x00000000u, 0x00040047u,
++    0x00000462u, 0x0000000bu, 0x00000019u, 0x00030047u, 0x000004aeu, 0x00000000u, 0x00030047u, 0x000004b4u,
++    0x00000000u, 0x00030047u, 0x000004b6u, 0x00000000u, 0x00030047u, 0x000004bcu, 0x00000000u, 0x00030047u,
++    0x000004beu, 0x00000000u, 0x00030047u, 0x000004c4u, 0x00000000u, 0x00030047u, 0x000004c6u, 0x00000000u,
++    0x00030047u, 0x000004ccu, 0x00000000u, 0x00030047u, 0x000004e2u, 0x00000000u, 0x00030047u, 0x000004eau,
++    0x00000000u, 0x00030047u, 0x000004ecu, 0x00000000u, 0x00030047u, 0x000004f4u, 0x00000000u, 0x00030047u,
++    0x000004f6u, 0x00000000u, 0x00030047u, 0x000004feu, 0x00000000u, 0x00030047u, 0x00000500u, 0x00000000u,
++    0x00030047u, 0x00000508u, 0x00000000u, 0x00030047u, 0x00000517u, 0x00000000u, 0x00030047u, 0x0000051fu,
++    0x00000000u, 0x00030047u, 0x00000521u, 0x00000000u, 0x00030047u, 0x00000529u, 0x00000000u, 0x00030047u,
++    0x0000052bu, 0x00000000u, 0x00030047u, 0x00000533u, 0x00000000u, 0x00030047u, 0x00000535u, 0x00000000u,
++    0x00030047u, 0x0000053du, 0x00000000u, 0x00020013u, 0x00000002u, 0x00030021u, 0x00000003u, 0x00000002u,
++    0x00040015u, 0x00000006u, 0x00000020u, 0x00000000u, 0x00030016u, 0x00000008u, 0x00000020u, 0x00040017u,
++    0x00000009u, 0x00000008u, 0x00000002u, 0x00040020u, 0x0000000fu, 0x00000007u, 0x00000009u, 0x00020014u,
++    0x00000016u, 0x00040017u, 0x00000017u, 0x00000016u, 0x00000002u, 0x00040015u, 0x0000001eu, 0x00000020u,
++    0x00000001u, 0x00040017u, 0x0000001fu, 0x0000001eu, 0x00000002u, 0x00040017u, 0x0000002cu, 0x00000008u,
++    0x00000004u, 0x0004002bu, 0x00000006u, 0x00000040u, 0x00000029u, 0x0004001cu, 0x00000041u, 0x00000006u,
++    0x00000040u, 0x0004002bu, 0x00000006u, 0x00000042u, 0x00000014u, 0x0004001cu, 0x00000043u, 0x00000041u,
++    0x00000042u, 0x00040020u, 0x00000044u, 0x00000004u, 0x00000043u, 0x0004003bu, 0x00000044u, 0x00000045u,
++    0x00000004u, 0x00040020u, 0x00000048u, 0x00000004u, 0x00000006u, 0x0004002bu, 0x00000006u, 0x00000059u,
++    0x00000001u, 0x0004002bu, 0x0000001eu, 0x00000064u, 0x00000000u, 0x0004002bu, 0x0000001eu, 0x00000065u,
++    0x00000001u, 0x0004002bu, 0x0000001eu, 0x00000069u, 0x00000002u, 0x0004002bu, 0x0000001eu, 0x0000006cu,
++    0x00000003u, 0x0004002bu, 0x0000001eu, 0x00000072u, 0x00000005u, 0x0005002cu, 0x0000001fu, 0x00000082u,
++    0x00000064u, 0x00000064u, 0x0005002cu, 0x0000001fu, 0x00000087u, 0x00000065u, 0x00000065u, 0x0004001eu,
++    0x00000094u, 0x0000001fu, 0x00000009u, 0x00040020u, 0x00000095u, 0x00000009u, 0x00000094u, 0x0004003bu,
++    0x00000095u, 0x00000096u, 0x00000009u, 0x00040020u, 0x00000097u, 0x00000009u, 0x0000001fu, 0x00040020u,
++    0x000000a4u, 0x00000009u, 0x00000009u, 0x0004002bu, 0x00000006u, 0x000000feu, 0x00000002u, 0x00040017u,
++    0x00000140u, 0x00000006u, 0x00000003u, 0x00040020u, 0x00000141u, 0x00000001u, 0x00000140u, 0x0004003bu,
++    0x00000141u, 0x00000142u, 0x00000001u, 0x00040017u, 0x00000143u, 0x00000006u, 0x00000002u, 0x0004002bu,
++    0x0000001eu, 0x00000147u, 0x00000010u, 0x0005002cu, 0x0000001fu, 0x00000148u, 0x00000147u, 0x00000147u,
++    0x00090019u, 0x00000159u, 0x00000008u, 0x00000001u, 0x00000000u, 0x00000001u, 0x00000000u, 0x00000001u,
++    0x00000000u, 0x0003001bu, 0x0000015au, 0x00000159u, 0x00040020u, 0x0000015bu, 0x00000000u, 0x0000015au,
++    0x0004003bu, 0x0000015bu, 0x0000015cu, 0x00000000u, 0x0004002bu, 0x00000008u, 0x00000164u, 0x00000000u,
++    0x00040017u, 0x00000165u, 0x00000008u, 0x00000003u, 0x0003002au, 0x00000016u, 0x0000016du, 0x0004002bu,
++    0x00000008u, 0x00000173u, 0x40000000u, 0x0004002bu, 0x00000008u, 0x00000180u, 0x3f800000u, 0x0004002bu,
++    0x00000008u, 0x0000018du, 0x40400000u, 0x0004002bu, 0x00000006u, 0x0000019fu, 0x00000010u, 0x0004002bu,
++    0x0000001eu, 0x000001acu, 0x00000014u, 0x0004002bu, 0x00000006u, 0x00000236u, 0x00000108u, 0x0004002bu,
++    0x00000006u, 0x00000238u, 0x00000008u, 0x0004002bu, 0x00000006u, 0x0000023au, 0x00000004u, 0x0004001cu,
++    0x00000264u, 0x00000009u, 0x0000019fu, 0x00040020u, 0x00000265u, 0x00000007u, 0x00000264u, 0x0004002bu,
++    0x00000008u, 0x0000026au, 0x3f9d7658u, 0x0004002bu, 0x00000008u, 0x00000270u, 0x3f5019c3u, 0x0004002bu,
++    0x0000001eu, 0x0000027cu, 0x0000000fu, 0x0004002bu, 0x00000008u, 0x0000027fu, 0x3ee31355u, 0x0004002bu,
++    0x0000001eu, 0x00000297u, 0x0000000eu, 0x0004002bu, 0x00000008u, 0x0000029au, 0x3f620676u, 0x0004002bu,
++    0x0000001eu, 0x000002acu, 0x00000004u, 0x0004002bu, 0x0000001eu, 0x000002b3u, 0x0000000du, 0x0004002bu,
++    0x00000008u, 0x000002b6u, 0xbd5901aeu, 0x0004002bu, 0x0000001eu, 0x000002ceu, 0x0000000cu, 0x0004002bu,
++    0x00000008u, 0x000002d1u, 0xbfcb0673u, 0x0004002bu, 0x0000001eu, 0x000002e9u, 0x00000006u, 0x00040020u,
++    0x0000040au, 0x00000001u, 0x00000006u, 0x0004003bu, 0x0000040au, 0x0000040bu, 0x00000001u, 0x0004002bu,
++    0x0000001eu, 0x0000042cu, 0x00000020u, 0x00030031u, 0x00000016u, 0x00000436u, 0x0004002bu, 0x00000008u,
++    0x00000439u, 0x3f000000u, 0x00090019u, 0x0000043du, 0x00000008u, 0x00000001u, 0x00000000u, 0x00000000u,
++    0x00000000u, 0x00000002u, 0x00000000u, 0x00040020u, 0x0000043eu, 0x00000000u, 0x0000043du, 0x0004003bu,
++    0x0000043eu, 0x0000043fu, 0x00000000u, 0x0004002bu, 0x0000001eu, 0x0000045cu, 0x00000008u, 0x0004002bu,
++    0x00000006u, 0x00000461u, 0x00000040u, 0x0006002cu, 0x00000140u, 0x00000462u, 0x00000461u, 0x00000059u,
++    0x00000059u, 0x0005002cu, 0x0000001fu, 0x00000eb8u, 0x00000069u, 0x00000069u, 0x0005002cu, 0x00000009u,
++    0x00000ebeu, 0x00000439u, 0x00000439u, 0x0005002cu, 0x0000001fu, 0x00000ebfu, 0x0000042cu, 0x0000042cu,
++    0x00050036u, 0x00000002u, 0x00000004u, 0x00000000u, 0x00000003u, 0x000200f8u, 0x00000005u, 0x0004003bu,
++    0x00000265u, 0x00000cadu, 0x00000007u, 0x0004003bu, 0x00000265u, 0x00000bacu, 0x00000007u, 0x0004003bu,
++    0x00000265u, 0x00000ab4u, 0x00000007u, 0x0004003du, 0x00000006u, 0x0000040cu, 0x0000040bu, 0x0004003du,
++    0x00000140u, 0x000004a1u, 0x00000142u, 0x0007004fu, 0x00000143u, 0x000004a2u, 0x000004a1u, 0x000004a1u,
++    0x00000000u, 0x00000001u, 0x0004007cu, 0x0000001fu, 0x000004a3u, 0x000004a2u, 0x00050084u, 0x0000001fu,
++    0x000004a4u, 0x000004a3u, 0x00000148u, 0x00050082u, 0x0000001fu, 0x000004a6u, 0x000004a4u, 0x00000eb8u,
++    0x000600cbu, 0x00000006u, 0x0000054bu, 0x0000040cu, 0x00000064u, 0x00000065u, 0x000600cbu, 0x00000006u,
++    0x0000054du, 0x0000040cu, 0x00000065u, 0x00000069u, 0x000600cbu, 0x00000006u, 0x0000054fu, 0x0000040cu,
++    0x0000006cu, 0x00000069u, 0x000500c4u, 0x00000006u, 0x00000550u, 0x0000054fu, 0x00000065u, 0x000500c5u,
++    0x00000006u, 0x00000552u, 0x0000054bu, 0x00000550u, 0x000600cbu, 0x00000006u, 0x00000554u, 0x0000040cu,
++    0x00000072u, 0x00000065u, 0x000500c4u, 0x00000006u, 0x00000555u, 0x00000554u, 0x00000069u, 0x000500c5u,
++    0x00000006u, 0x00000557u, 0x0000054du, 0x00000555u, 0x0004007cu, 0x0000001eu, 0x00000559u, 0x00000557u,
++    0x0004007cu, 0x0000001eu, 0x0000055bu, 0x00000552u, 0x00050050u, 0x0000001fu, 0x0000055cu, 0x00000559u,
++    0x0000055bu, 0x00050084u, 0x0000001fu, 0x000004aau, 0x00000eb8u, 0x0000055cu, 0x00050080u, 0x0000001fu,
++    0x000004adu, 0x000004a6u, 0x000004aau, 0x0004003du, 0x0000015au, 0x000004aeu, 0x0000015cu, 0x000500b1u,
++    0x00000017u, 0x00000568u, 0x000004adu, 0x00000082u, 0x00050051u, 0x00000016u, 0x00000589u, 0x00000568u,
++    0x00000000u, 0x00050051u, 0x00000016u, 0x0000058eu, 0x00000568u, 0x00000001u, 0x000600a9u, 0x0000001fu,
++    0x0000056au, 0x00000568u, 0x00000087u, 0x00000082u, 0x00050082u, 0x0000001fu, 0x0000056cu, 0x000004adu,
++    0x0000056au, 0x00050080u, 0x0000001fu, 0x0000056fu, 0x0000056cu, 0x00000087u, 0x0004006fu, 0x00000009u,
++    0x0000057eu, 0x0000056fu, 0x00050041u, 0x000000a4u, 0x0000057fu, 0x00000096u, 0x00000065u, 0x0004003du,
++    0x00000009u, 0x00000580u, 0x0000057fu, 0x00050085u, 0x00000009u, 0x00000581u, 0x0000057eu, 0x00000580u,
++    0x00050051u, 0x00000008u, 0x000004b1u, 0x00000581u, 0x00000001u, 0x00050051u, 0x00000008u, 0x000004b2u,
++    0x00000581u, 0x00000000u, 0x00060050u, 0x00000165u, 0x000004b3u, 0x000004b1u, 0x000004b2u, 0x00000164u,
++    0x00060060u, 0x0000002cu, 0x000004b4u, 0x000004aeu, 0x000004b3u, 0x00000064u, 0x0004003du, 0x0000015au,
++    0x000004b6u, 0x0000015cu, 0x00050050u, 0x00000017u, 0x000005d1u, 0x0000016du, 0x0000058eu, 0x000600a9u,
++    0x0000001fu, 0x000005abu, 0x000005d1u, 0x00000087u, 0x00000082u, 0x00050082u, 0x0000001fu, 0x000005adu,
++    0x000004adu, 0x000005abu, 0x00050080u, 0x0000001fu, 0x000005b0u, 0x000005adu, 0x00000087u, 0x00050041u,
++    0x00000097u, 0x000005b7u, 0x00000096u, 0x00000064u, 0x0004003du, 0x0000001fu, 0x000005b8u, 0x000005b7u,
++    0x000500afu, 0x00000017u, 0x000005b9u, 0x000005b0u, 0x000005b8u, 0x00050051u, 0x00000016u, 0x000005d7u,
++    0x000005b9u, 0x00000000u, 0x00050050u, 0x00000017u, 0x000005deu, 0x000005d7u, 0x0000016du, 0x000600a9u,
++    0x0000001fu, 0x000005bbu, 0x000005deu, 0x00000087u, 0x00000082u, 0x00050080u, 0x0000001fu, 0x000005bdu,
++    0x000005b0u, 0x000005bbu, 0x0004006fu, 0x00000009u, 0x000005bfu, 0x000005bdu, 0x00050085u, 0x00000009u,
++    0x000005c2u, 0x000005bfu, 0x00000580u, 0x00050051u, 0x00000008u, 0x000004b9u, 0x000005c2u, 0x00000001u,
++    0x00050051u, 0x00000008u, 0x000004bau, 0x000005c2u, 0x00000000u, 0x00060050u, 0x00000165u, 0x000004bbu,
++    0x000004b9u, 0x000004bau, 0x00000173u, 0x00060060u, 0x0000002cu, 0x000004bcu, 0x000004b6u, 0x000004bbu,
++    0x00000064u, 0x0004003du, 0x0000015au, 0x000004beu, 0x0000015cu, 0x00050050u, 0x00000017u, 0x00000612u,
++    0x00000589u, 0x0000016du, 0x000600a9u, 0x0000001fu, 0x000005ecu, 0x00000612u, 0x00000087u, 0x00000082u,
++    0x00050082u, 0x0000001fu, 0x000005eeu, 0x000004adu, 0x000005ecu, 0x00050080u, 0x0000001fu, 0x000005f1u,
++    0x000005eeu, 0x00000087u, 0x000500afu, 0x00000017u, 0x000005fau, 0x000005f1u, 0x000005b8u, 0x00050051u,
++    0x00000016u, 0x0000061du, 0x000005fau, 0x00000001u, 0x00050050u, 0x00000017u, 0x0000061fu, 0x0000016du,
++    0x0000061du, 0x000600a9u, 0x0000001fu, 0x000005fcu, 0x0000061fu, 0x00000087u, 0x00000082u, 0x00050080u,
++    0x0000001fu, 0x000005feu, 0x000005f1u, 0x000005fcu, 0x0004006fu, 0x00000009u, 0x00000600u, 0x000005feu,
++    0x00050085u, 0x00000009u, 0x00000603u, 0x00000600u, 0x00000580u, 0x00050051u, 0x00000008u, 0x000004c1u,
++    0x00000603u, 0x00000001u, 0x00050051u, 0x00000008u, 0x000004c2u, 0x00000603u, 0x00000000u, 0x00060050u,
++    0x00000165u, 0x000004c3u, 0x000004c1u, 0x000004c2u, 0x00000180u, 0x00060060u, 0x0000002cu, 0x000004c4u,
++    0x000004beu, 0x000004c3u, 0x00000064u, 0x0004003du, 0x0000015au, 0x000004c6u, 0x0000015cu, 0x00050080u,
++    0x0000001fu, 0x00000632u, 0x000004adu, 0x00000087u, 0x000500afu, 0x00000017u, 0x0000063bu, 0x00000632u,
++    0x000005b8u, 0x000600a9u, 0x0000001fu, 0x0000063du, 0x0000063bu, 0x00000087u, 0x00000082u, 0x00050080u,
++    0x0000001fu, 0x0000063fu, 0x00000632u, 0x0000063du, 0x0004006fu, 0x00000009u, 0x00000641u, 0x0000063fu,
++    0x00050085u, 0x00000009u, 0x00000644u, 0x00000641u, 0x00000580u, 0x00050051u, 0x00000008u, 0x000004c9u,
++    0x00000644u, 0x00000001u, 0x00050051u, 0x00000008u, 0x000004cau, 0x00000644u, 0x00000000u, 0x00060050u,
++    0x00000165u, 0x000004cbu, 0x000004c9u, 0x000004cau, 0x0000018du, 0x00060060u, 0x0000002cu, 0x000004ccu,
++    0x000004c6u, 0x000004cbu, 0x00000064u, 0x00050051u, 0x0000001eu, 0x0000067bu, 0x000004aau, 0x00000001u,
++    0x0004007cu, 0x00000006u, 0x0000067du, 0x0000067bu, 0x00050051u, 0x0000001eu, 0x0000067fu, 0x000004aau,
++    0x00000000u, 0x00050084u, 0x0000001eu, 0x00000680u, 0x00000069u, 0x0000067fu, 0x0004007cu, 0x00000006u,
++    0x00000682u, 0x00000680u, 0x00050051u, 0x00000008u, 0x00000684u, 0x000004b4u, 0x00000003u, 0x00050051u,
++    0x00000008u, 0x00000686u, 0x000004c4u, 0x00000003u, 0x00050050u, 0x00000009u, 0x00000687u, 0x00000684u,
++    0x00000686u, 0x0006000cu, 0x00000006u, 0x000006f6u, 0x00000001u, 0x0000003au, 0x00000687u, 0x00060041u,
++    0x00000048u, 0x000006f7u, 0x00000045u, 0x0000067du, 0x00000682u, 0x0003003eu, 0x000006f7u, 0x000006f6u,
++    0x00050080u, 0x0000001eu, 0x00000690u, 0x00000680u, 0x00000065u, 0x0004007cu, 0x00000006u, 0x00000691u,
++    0x00000690u, 0x00050051u, 0x00000008u, 0x00000693u, 0x000004bcu, 0x00000003u, 0x00050051u, 0x00000008u,
++    0x00000695u, 0x000004ccu, 0x00000003u, 0x00050050u, 0x00000009u, 0x00000696u, 0x00000693u, 0x00000695u,
++    0x0006000cu, 0x00000006u, 0x000006fcu, 0x00000001u, 0x0000003au, 0x00000696u, 0x00060041u, 0x00000048u,
++    0x000006fdu, 0x00000045u, 0x0000067du, 0x00000691u, 0x0003003eu, 0x000006fdu, 0x000006fcu, 0x00050080u,
++    0x0000001eu, 0x0000069fu, 0x00000680u, 0x00000069u, 0x0004007cu, 0x00000006u, 0x000006a0u, 0x0000069fu,
++    0x00050051u, 0x00000008u, 0x000006a2u, 0x000004b4u, 0x00000000u, 0x00050051u, 0x00000008u, 0x000006a4u,
++    0x000004c4u, 0x00000000u, 0x00050050u, 0x00000009u, 0x000006a5u, 0x000006a2u, 0x000006a4u, 0x0006000cu,
++    0x00000006u, 0x00000702u, 0x00000001u, 0x0000003au, 0x000006a5u, 0x00060041u, 0x00000048u, 0x00000703u,
++    0x00000045u, 0x0000067du, 0x000006a0u, 0x0003003eu, 0x00000703u, 0x00000702u, 0x00050080u, 0x0000001eu,
++    0x000006aeu, 0x00000680u, 0x0000006cu, 0x0004007cu, 0x00000006u, 0x000006afu, 0x000006aeu, 0x00050051u,
++    0x00000008u, 0x000006b1u, 0x000004bcu, 0x00000000u, 0x00050051u, 0x00000008u, 0x000006b3u, 0x000004ccu,
++    0x00000000u, 0x00050050u, 0x00000009u, 0x000006b4u, 0x000006b1u, 0x000006b3u, 0x0006000cu, 0x00000006u,
++    0x00000708u, 0x00000001u, 0x0000003au, 0x000006b4u, 0x00060041u, 0x00000048u, 0x00000709u, 0x00000045u,
++    0x0000067du, 0x000006afu, 0x0003003eu, 0x00000709u, 0x00000708u, 0x00050080u, 0x0000001eu, 0x000006b8u,
++    0x0000067bu, 0x00000065u, 0x0004007cu, 0x00000006u, 0x000006b9u, 0x000006b8u, 0x00050051u, 0x00000008u,
++    0x000006c0u, 0x000004b4u, 0x00000002u, 0x00050051u, 0x00000008u, 0x000006c2u, 0x000004c4u, 0x00000002u,
++    0x00050050u, 0x00000009u, 0x000006c3u, 0x000006c0u, 0x000006c2u, 0x0006000cu, 0x00000006u, 0x0000070eu,
++    0x00000001u, 0x0000003au, 0x000006c3u, 0x00060041u, 0x00000048u, 0x0000070fu, 0x00000045u, 0x000006b9u,
++    0x00000682u, 0x0003003eu, 0x0000070fu, 0x0000070eu, 0x00050051u, 0x00000008u, 0x000006cfu, 0x000004bcu,
++    0x00000002u, 0x00050051u, 0x00000008u, 0x000006d1u, 0x000004ccu, 0x00000002u, 0x00050050u, 0x00000009u,
++    0x000006d2u, 0x000006cfu, 0x000006d1u, 0x0006000cu, 0x00000006u, 0x00000714u, 0x00000001u, 0x0000003au,
++    0x000006d2u, 0x00060041u, 0x00000048u, 0x00000715u, 0x00000045u, 0x000006b9u, 0x00000691u, 0x0003003eu,
++    0x00000715u, 0x00000714u, 0x00050051u, 0x00000008u, 0x000006deu, 0x000004b4u, 0x00000001u, 0x00050051u,
++    0x00000008u, 0x000006e0u, 0x000004c4u, 0x00000001u, 0x00050050u, 0x00000009u, 0x000006e1u, 0x000006deu,
++    0x000006e0u, 0x0006000cu, 0x00000006u, 0x0000071au, 0x00000001u, 0x0000003au, 0x000006e1u, 0x00060041u,
++    0x00000048u, 0x0000071bu, 0x00000045u, 0x000006b9u, 0x000006a0u, 0x0003003eu, 0x0000071bu, 0x0000071au,
++    0x00050051u, 0x00000008u, 0x000006edu, 0x000004bcu, 0x00000001u, 0x00050051u, 0x00000008u, 0x000006efu,
++    0x000004ccu, 0x00000001u, 0x00050050u, 0x00000009u, 0x000006f0u, 0x000006edu, 0x000006efu, 0x0006000cu,
++    0x00000006u, 0x00000720u, 0x00000001u, 0x0000003au, 0x000006f0u, 0x00060041u, 0x00000048u, 0x00000721u,
++    0x00000045u, 0x000006b9u, 0x000006afu, 0x0003003eu, 0x00000721u, 0x00000720u, 0x00050089u, 0x00000006u,
++    0x000004d5u, 0x0000040cu, 0x000000feu, 0x00050084u, 0x00000006u, 0x000004d6u, 0x000000feu, 0x000004d5u,
++    0x00050080u, 0x00000006u, 0x000004d7u, 0x0000019fu, 0x000004d6u, 0x0004007cu, 0x0000001eu, 0x000004d8u,
++    0x000004d7u, 0x00050086u, 0x00000006u, 0x000004dau, 0x0000040cu, 0x000000feu, 0x00050084u, 0x00000006u,
++    0x000004dbu, 0x000000feu, 0x000004dau, 0x0004007cu, 0x0000001eu, 0x000004dcu, 0x000004dbu, 0x00050050u,
++    0x0000001fu, 0x000004ddu, 0x000004d8u, 0x000004dcu, 0x000500b1u, 0x00000016u, 0x000004e0u, 0x000004dcu,
++    0x000001acu, 0x000300f7u, 0x00000510u, 0x00000000u, 0x000400fau, 0x000004e0u, 0x000004e1u, 0x00000510u,
++    0x000200f8u, 0x000004e1u, 0x0004003du, 0x0000015au, 0x000004e2u, 0x0000015cu, 0x00050080u, 0x0000001fu,
++    0x000004e5u, 0x000004a6u, 0x000004ddu, 0x000500b1u, 0x00000017u, 0x0000072du, 0x000004e5u, 0x00000082u,
++    0x00050051u, 0x00000016u, 0x0000074eu, 0x0000072du, 0x00000000u, 0x00050051u, 0x00000016u, 0x00000753u,
++    0x0000072du, 0x00000001u, 0x000600a9u, 0x0000001fu, 0x0000072fu, 0x0000072du, 0x00000087u, 0x00000082u,
++    0x00050082u, 0x0000001fu, 0x00000731u, 0x000004e5u, 0x0000072fu, 0x00050080u, 0x0000001fu, 0x00000734u,
++    0x00000731u, 0x00000087u, 0x0004006fu, 0x00000009u, 0x00000743u, 0x00000734u, 0x00050085u, 0x00000009u,
++    0x00000746u, 0x00000743u, 0x00000580u, 0x00050051u, 0x00000008u, 0x000004e7u, 0x00000746u, 0x00000001u,
++    0x00050051u, 0x00000008u, 0x000004e8u, 0x00000746u, 0x00000000u, 0x00060050u, 0x00000165u, 0x000004e9u,
++    0x000004e7u, 0x000004e8u, 0x00000164u, 0x00060060u, 0x0000002cu, 0x000004eau, 0x000004e2u, 0x000004e9u,
++    0x00000064u, 0x0004003du, 0x0000015au, 0x000004ecu, 0x0000015cu, 0x00050050u, 0x00000017u, 0x00000796u,
++    0x0000016du, 0x00000753u, 0x000600a9u, 0x0000001fu, 0x00000770u, 0x00000796u, 0x00000087u, 0x00000082u,
++    0x00050082u, 0x0000001fu, 0x00000772u, 0x000004e5u, 0x00000770u, 0x00050080u, 0x0000001fu, 0x00000775u,
++    0x00000772u, 0x00000087u, 0x000500afu, 0x00000017u, 0x0000077eu, 0x00000775u, 0x000005b8u, 0x00050051u,
++    0x00000016u, 0x0000079cu, 0x0000077eu, 0x00000000u, 0x00050050u, 0x00000017u, 0x000007a3u, 0x0000079cu,
++    0x0000016du, 0x000600a9u, 0x0000001fu, 0x00000780u, 0x000007a3u, 0x00000087u, 0x00000082u, 0x00050080u,
++    0x0000001fu, 0x00000782u, 0x00000775u, 0x00000780u, 0x0004006fu, 0x00000009u, 0x00000784u, 0x00000782u,
++    0x00050085u, 0x00000009u, 0x00000787u, 0x00000784u, 0x00000580u, 0x00050051u, 0x00000008u, 0x000004f1u,
++    0x00000787u, 0x00000001u, 0x00050051u, 0x00000008u, 0x000004f2u, 0x00000787u, 0x00000000u, 0x00060050u,
++    0x00000165u, 0x000004f3u, 0x000004f1u, 0x000004f2u, 0x00000173u, 0x00060060u, 0x0000002cu, 0x000004f4u,
++    0x000004ecu, 0x000004f3u, 0x00000064u, 0x0004003du, 0x0000015au, 0x000004f6u, 0x0000015cu, 0x00050050u,
++    0x00000017u, 0x000007d7u, 0x0000074eu, 0x0000016du, 0x000600a9u, 0x0000001fu, 0x000007b1u, 0x000007d7u,
++    0x00000087u, 0x00000082u, 0x00050082u, 0x0000001fu, 0x000007b3u, 0x000004e5u, 0x000007b1u, 0x00050080u,
++    0x0000001fu, 0x000007b6u, 0x000007b3u, 0x00000087u, 0x000500afu, 0x00000017u, 0x000007bfu, 0x000007b6u,
++    0x000005b8u, 0x00050051u, 0x00000016u, 0x000007e2u, 0x000007bfu, 0x00000001u, 0x00050050u, 0x00000017u,
++    0x000007e4u, 0x0000016du, 0x000007e2u, 0x000600a9u, 0x0000001fu, 0x000007c1u, 0x000007e4u, 0x00000087u,
++    0x00000082u, 0x00050080u, 0x0000001fu, 0x000007c3u, 0x000007b6u, 0x000007c1u, 0x0004006fu, 0x00000009u,
++    0x000007c5u, 0x000007c3u, 0x00050085u, 0x00000009u, 0x000007c8u, 0x000007c5u, 0x00000580u, 0x00050051u,
++    0x00000008u, 0x000004fbu, 0x000007c8u, 0x00000001u, 0x00050051u, 0x00000008u, 0x000004fcu, 0x000007c8u,
++    0x00000000u, 0x00060050u, 0x00000165u, 0x000004fdu, 0x000004fbu, 0x000004fcu, 0x00000180u, 0x00060060u,
++    0x0000002cu, 0x000004feu, 0x000004f6u, 0x000004fdu, 0x00000064u, 0x0004003du, 0x0000015au, 0x00000500u,
++    0x0000015cu, 0x00050080u, 0x0000001fu, 0x000007f7u, 0x000004e5u, 0x00000087u, 0x000500afu, 0x00000017u,
++    0x00000800u, 0x000007f7u, 0x000005b8u, 0x000600a9u, 0x0000001fu, 0x00000802u, 0x00000800u, 0x00000087u,
++    0x00000082u, 0x00050080u, 0x0000001fu, 0x00000804u, 0x000007f7u, 0x00000802u, 0x0004006fu, 0x00000009u,
++    0x00000806u, 0x00000804u, 0x00050085u, 0x00000009u, 0x00000809u, 0x00000806u, 0x00000580u, 0x00050051u,
++    0x00000008u, 0x00000505u, 0x00000809u, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000506u, 0x00000809u,
++    0x00000000u, 0x00060050u, 0x00000165u, 0x00000507u, 0x00000505u, 0x00000506u, 0x0000018du, 0x00060060u,
++    0x0000002cu, 0x00000508u, 0x00000500u, 0x00000507u, 0x00000064u, 0x00050084u, 0x0000001eu, 0x00000845u,
++    0x00000069u, 0x000004d8u, 0x0004007cu, 0x00000006u, 0x00000847u, 0x00000845u, 0x00050051u, 0x00000008u,
++    0x00000849u, 0x000004eau, 0x00000003u, 0x00050051u, 0x00000008u, 0x0000084bu, 0x000004feu, 0x00000003u,
++    0x00050050u, 0x00000009u, 0x0000084cu, 0x00000849u, 0x0000084bu, 0x0006000cu, 0x00000006u, 0x000008bbu,
++    0x00000001u, 0x0000003au, 0x0000084cu, 0x00060041u, 0x00000048u, 0x000008bcu, 0x00000045u, 0x000004dbu,
++    0x00000847u, 0x0003003eu, 0x000008bcu, 0x000008bbu, 0x00050080u, 0x0000001eu, 0x00000855u, 0x00000845u,
++    0x00000065u, 0x0004007cu, 0x00000006u, 0x00000856u, 0x00000855u, 0x00050051u, 0x00000008u, 0x00000858u,
++    0x000004f4u, 0x00000003u, 0x00050051u, 0x00000008u, 0x0000085au, 0x00000508u, 0x00000003u, 0x00050050u,
++    0x00000009u, 0x0000085bu, 0x00000858u, 0x0000085au, 0x0006000cu, 0x00000006u, 0x000008c1u, 0x00000001u,
++    0x0000003au, 0x0000085bu, 0x00060041u, 0x00000048u, 0x000008c2u, 0x00000045u, 0x000004dbu, 0x00000856u,
++    0x0003003eu, 0x000008c2u, 0x000008c1u, 0x00050080u, 0x0000001eu, 0x00000864u, 0x00000845u, 0x00000069u,
++    0x0004007cu, 0x00000006u, 0x00000865u, 0x00000864u, 0x00050051u, 0x00000008u, 0x00000867u, 0x000004eau,
++    0x00000000u, 0x00050051u, 0x00000008u, 0x00000869u, 0x000004feu, 0x00000000u, 0x00050050u, 0x00000009u,
++    0x0000086au, 0x00000867u, 0x00000869u, 0x0006000cu, 0x00000006u, 0x000008c7u, 0x00000001u, 0x0000003au,
++    0x0000086au, 0x00060041u, 0x00000048u, 0x000008c8u, 0x00000045u, 0x000004dbu, 0x00000865u, 0x0003003eu,
++    0x000008c8u, 0x000008c7u, 0x00050080u, 0x0000001eu, 0x00000873u, 0x00000845u, 0x0000006cu, 0x0004007cu,
++    0x00000006u, 0x00000874u, 0x00000873u, 0x00050051u, 0x00000008u, 0x00000876u, 0x000004f4u, 0x00000000u,
++    0x00050051u, 0x00000008u, 0x00000878u, 0x00000508u, 0x00000000u, 0x00050050u, 0x00000009u, 0x00000879u,
++    0x00000876u, 0x00000878u, 0x0006000cu, 0x00000006u, 0x000008cdu, 0x00000001u, 0x0000003au, 0x00000879u,
++    0x00060041u, 0x00000048u, 0x000008ceu, 0x00000045u, 0x000004dbu, 0x00000874u, 0x0003003eu, 0x000008ceu,
++    0x000008cdu, 0x00050080u, 0x0000001eu, 0x0000087du, 0x000004dcu, 0x00000065u, 0x0004007cu, 0x00000006u,
++    0x0000087eu, 0x0000087du, 0x00050051u, 0x00000008u, 0x00000885u, 0x000004eau, 0x00000002u, 0x00050051u,
++    0x00000008u, 0x00000887u, 0x000004feu, 0x00000002u, 0x00050050u, 0x00000009u, 0x00000888u, 0x00000885u,
++    0x00000887u, 0x0006000cu, 0x00000006u, 0x000008d3u, 0x00000001u, 0x0000003au, 0x00000888u, 0x00060041u,
++    0x00000048u, 0x000008d4u, 0x00000045u, 0x0000087eu, 0x00000847u, 0x0003003eu, 0x000008d4u, 0x000008d3u,
++    0x00050051u, 0x00000008u, 0x00000894u, 0x000004f4u, 0x00000002u, 0x00050051u, 0x00000008u, 0x00000896u,
++    0x00000508u, 0x00000002u, 0x00050050u, 0x00000009u, 0x00000897u, 0x00000894u, 0x00000896u, 0x0006000cu,
++    0x00000006u, 0x000008d9u, 0x00000001u, 0x0000003au, 0x00000897u, 0x00060041u, 0x00000048u, 0x000008dau,
++    0x00000045u, 0x0000087eu, 0x00000856u, 0x0003003eu, 0x000008dau, 0x000008d9u, 0x00050051u, 0x00000008u,
++    0x000008a3u, 0x000004eau, 0x00000001u, 0x00050051u, 0x00000008u, 0x000008a5u, 0x000004feu, 0x00000001u,
++    0x00050050u, 0x00000009u, 0x000008a6u, 0x000008a3u, 0x000008a5u, 0x0006000cu, 0x00000006u, 0x000008dfu,
++    0x00000001u, 0x0000003au, 0x000008a6u, 0x00060041u, 0x00000048u, 0x000008e0u, 0x00000045u, 0x0000087eu,
++    0x00000865u, 0x0003003eu, 0x000008e0u, 0x000008dfu, 0x00050051u, 0x00000008u, 0x000008b2u, 0x000004f4u,
++    0x00000001u, 0x00050051u, 0x00000008u, 0x000008b4u, 0x00000508u, 0x00000001u, 0x00050050u, 0x00000009u,
++    0x000008b5u, 0x000008b2u, 0x000008b4u, 0x0006000cu, 0x00000006u, 0x000008e5u, 0x00000001u, 0x0000003au,
++    0x000008b5u, 0x00060041u, 0x00000048u, 0x000008e6u, 0x00000045u, 0x0000087eu, 0x00000874u, 0x0003003eu,
++    0x000008e6u, 0x000008e5u, 0x000200f9u, 0x00000510u, 0x000200f8u, 0x00000510u, 0x0007004fu, 0x0000001fu,
++    0x00000512u, 0x000004ddu, 0x000004ddu, 0x00000001u, 0x00000000u, 0x000500b1u, 0x00000016u, 0x00000515u,
++    0x000004dcu, 0x00000147u, 0x000300f7u, 0x00000545u, 0x00000000u, 0x000400fau, 0x00000515u, 0x00000516u,
++    0x00000545u, 0x000200f8u, 0x00000516u, 0x0004003du, 0x0000015au, 0x00000517u, 0x0000015cu, 0x00050080u,
++    0x0000001fu, 0x0000051au, 0x000004a6u, 0x00000512u, 0x000500b1u, 0x00000017u, 0x000008f2u, 0x0000051au,
++    0x00000082u, 0x00050051u, 0x00000016u, 0x00000913u, 0x000008f2u, 0x00000000u, 0x00050051u, 0x00000016u,
++    0x00000918u, 0x000008f2u, 0x00000001u, 0x000600a9u, 0x0000001fu, 0x000008f4u, 0x000008f2u, 0x00000087u,
++    0x00000082u, 0x00050082u, 0x0000001fu, 0x000008f6u, 0x0000051au, 0x000008f4u, 0x00050080u, 0x0000001fu,
++    0x000008f9u, 0x000008f6u, 0x00000087u, 0x0004006fu, 0x00000009u, 0x00000908u, 0x000008f9u, 0x00050085u,
++    0x00000009u, 0x0000090bu, 0x00000908u, 0x00000580u, 0x00050051u, 0x00000008u, 0x0000051cu, 0x0000090bu,
++    0x00000001u, 0x00050051u, 0x00000008u, 0x0000051du, 0x0000090bu, 0x00000000u, 0x00060050u, 0x00000165u,
++    0x0000051eu, 0x0000051cu, 0x0000051du, 0x00000164u, 0x00060060u, 0x0000002cu, 0x0000051fu, 0x00000517u,
++    0x0000051eu, 0x00000064u, 0x0004003du, 0x0000015au, 0x00000521u, 0x0000015cu, 0x00050050u, 0x00000017u,
++    0x0000095bu, 0x0000016du, 0x00000918u, 0x000600a9u, 0x0000001fu, 0x00000935u, 0x0000095bu, 0x00000087u,
++    0x00000082u, 0x00050082u, 0x0000001fu, 0x00000937u, 0x0000051au, 0x00000935u, 0x00050080u, 0x0000001fu,
++    0x0000093au, 0x00000937u, 0x00000087u, 0x000500afu, 0x00000017u, 0x00000943u, 0x0000093au, 0x000005b8u,
++    0x00050051u, 0x00000016u, 0x00000961u, 0x00000943u, 0x00000000u, 0x00050050u, 0x00000017u, 0x00000968u,
++    0x00000961u, 0x0000016du, 0x000600a9u, 0x0000001fu, 0x00000945u, 0x00000968u, 0x00000087u, 0x00000082u,
++    0x00050080u, 0x0000001fu, 0x00000947u, 0x0000093au, 0x00000945u, 0x0004006fu, 0x00000009u, 0x00000949u,
++    0x00000947u, 0x00050085u, 0x00000009u, 0x0000094cu, 0x00000949u, 0x00000580u, 0x00050051u, 0x00000008u,
++    0x00000526u, 0x0000094cu, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000527u, 0x0000094cu, 0x00000000u,
++    0x00060050u, 0x00000165u, 0x00000528u, 0x00000526u, 0x00000527u, 0x00000173u, 0x00060060u, 0x0000002cu,
++    0x00000529u, 0x00000521u, 0x00000528u, 0x00000064u, 0x0004003du, 0x0000015au, 0x0000052bu, 0x0000015cu,
++    0x00050050u, 0x00000017u, 0x0000099cu, 0x00000913u, 0x0000016du, 0x000600a9u, 0x0000001fu, 0x00000976u,
++    0x0000099cu, 0x00000087u, 0x00000082u, 0x00050082u, 0x0000001fu, 0x00000978u, 0x0000051au, 0x00000976u,
++    0x00050080u, 0x0000001fu, 0x0000097bu, 0x00000978u, 0x00000087u, 0x000500afu, 0x00000017u, 0x00000984u,
++    0x0000097bu, 0x000005b8u, 0x00050051u, 0x00000016u, 0x000009a7u, 0x00000984u, 0x00000001u, 0x00050050u,
++    0x00000017u, 0x000009a9u, 0x0000016du, 0x000009a7u, 0x000600a9u, 0x0000001fu, 0x00000986u, 0x000009a9u,
++    0x00000087u, 0x00000082u, 0x00050080u, 0x0000001fu, 0x00000988u, 0x0000097bu, 0x00000986u, 0x0004006fu,
++    0x00000009u, 0x0000098au, 0x00000988u, 0x00050085u, 0x00000009u, 0x0000098du, 0x0000098au, 0x00000580u,
++    0x00050051u, 0x00000008u, 0x00000530u, 0x0000098du, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000531u,
++    0x0000098du, 0x00000000u, 0x00060050u, 0x00000165u, 0x00000532u, 0x00000530u, 0x00000531u, 0x00000180u,
++    0x00060060u, 0x0000002cu, 0x00000533u, 0x0000052bu, 0x00000532u, 0x00000064u, 0x0004003du, 0x0000015au,
++    0x00000535u, 0x0000015cu, 0x00050080u, 0x0000001fu, 0x000009bcu, 0x0000051au, 0x00000087u, 0x000500afu,
++    0x00000017u, 0x000009c5u, 0x000009bcu, 0x000005b8u, 0x000600a9u, 0x0000001fu, 0x000009c7u, 0x000009c5u,
++    0x00000087u, 0x00000082u, 0x00050080u, 0x0000001fu, 0x000009c9u, 0x000009bcu, 0x000009c7u, 0x0004006fu,
++    0x00000009u, 0x000009cbu, 0x000009c9u, 0x00050085u, 0x00000009u, 0x000009ceu, 0x000009cbu, 0x00000580u,
++    0x00050051u, 0x00000008u, 0x0000053au, 0x000009ceu, 0x00000001u, 0x00050051u, 0x00000008u, 0x0000053bu,
++    0x000009ceu, 0x00000000u, 0x00060050u, 0x00000165u, 0x0000053cu, 0x0000053au, 0x0000053bu, 0x0000018du,
++    0x00060060u, 0x0000002cu, 0x0000053du, 0x00000535u, 0x0000053cu, 0x00000064u, 0x00050084u, 0x0000001eu,
++    0x00000a0au, 0x00000069u, 0x000004dcu, 0x0004007cu, 0x00000006u, 0x00000a0cu, 0x00000a0au, 0x00050051u,
++    0x00000008u, 0x00000a0eu, 0x0000051fu, 0x00000003u, 0x00050051u, 0x00000008u, 0x00000a10u, 0x00000533u,
++    0x00000003u, 0x00050050u, 0x00000009u, 0x00000a11u, 0x00000a0eu, 0x00000a10u, 0x0006000cu, 0x00000006u,
++    0x00000a80u, 0x00000001u, 0x0000003au, 0x00000a11u, 0x00060041u, 0x00000048u, 0x00000a81u, 0x00000045u,
++    0x000004d7u, 0x00000a0cu, 0x0003003eu, 0x00000a81u, 0x00000a80u, 0x00050080u, 0x0000001eu, 0x00000a1au,
++    0x00000a0au, 0x00000065u, 0x0004007cu, 0x00000006u, 0x00000a1bu, 0x00000a1au, 0x00050051u, 0x00000008u,
++    0x00000a1du, 0x00000529u, 0x00000003u, 0x00050051u, 0x00000008u, 0x00000a1fu, 0x0000053du, 0x00000003u,
++    0x00050050u, 0x00000009u, 0x00000a20u, 0x00000a1du, 0x00000a1fu, 0x0006000cu, 0x00000006u, 0x00000a86u,
++    0x00000001u, 0x0000003au, 0x00000a20u, 0x00060041u, 0x00000048u, 0x00000a87u, 0x00000045u, 0x000004d7u,
++    0x00000a1bu, 0x0003003eu, 0x00000a87u, 0x00000a86u, 0x00050080u, 0x0000001eu, 0x00000a29u, 0x00000a0au,
++    0x00000069u, 0x0004007cu, 0x00000006u, 0x00000a2au, 0x00000a29u, 0x00050051u, 0x00000008u, 0x00000a2cu,
++    0x0000051fu, 0x00000000u, 0x00050051u, 0x00000008u, 0x00000a2eu, 0x00000533u, 0x00000000u, 0x00050050u,
++    0x00000009u, 0x00000a2fu, 0x00000a2cu, 0x00000a2eu, 0x0006000cu, 0x00000006u, 0x00000a8cu, 0x00000001u,
++    0x0000003au, 0x00000a2fu, 0x00060041u, 0x00000048u, 0x00000a8du, 0x00000045u, 0x000004d7u, 0x00000a2au,
++    0x0003003eu, 0x00000a8du, 0x00000a8cu, 0x00050080u, 0x0000001eu, 0x00000a38u, 0x00000a0au, 0x0000006cu,
++    0x0004007cu, 0x00000006u, 0x00000a39u, 0x00000a38u, 0x00050051u, 0x00000008u, 0x00000a3bu, 0x00000529u,
++    0x00000000u, 0x00050051u, 0x00000008u, 0x00000a3du, 0x0000053du, 0x00000000u, 0x00050050u, 0x00000009u,
++    0x00000a3eu, 0x00000a3bu, 0x00000a3du, 0x0006000cu, 0x00000006u, 0x00000a92u, 0x00000001u, 0x0000003au,
++    0x00000a3eu, 0x00060041u, 0x00000048u, 0x00000a93u, 0x00000045u, 0x000004d7u, 0x00000a39u, 0x0003003eu,
++    0x00000a93u, 0x00000a92u, 0x00050080u, 0x0000001eu, 0x00000a42u, 0x000004d8u, 0x00000065u, 0x0004007cu,
++    0x00000006u, 0x00000a43u, 0x00000a42u, 0x00050051u, 0x00000008u, 0x00000a4au, 0x0000051fu, 0x00000002u,
++    0x00050051u, 0x00000008u, 0x00000a4cu, 0x00000533u, 0x00000002u, 0x00050050u, 0x00000009u, 0x00000a4du,
++    0x00000a4au, 0x00000a4cu, 0x0006000cu, 0x00000006u, 0x00000a98u, 0x00000001u, 0x0000003au, 0x00000a4du,
++    0x00060041u, 0x00000048u, 0x00000a99u, 0x00000045u, 0x00000a43u, 0x00000a0cu, 0x0003003eu, 0x00000a99u,
++    0x00000a98u, 0x00050051u, 0x00000008u, 0x00000a59u, 0x00000529u, 0x00000002u, 0x00050051u, 0x00000008u,
++    0x00000a5bu, 0x0000053du, 0x00000002u, 0x00050050u, 0x00000009u, 0x00000a5cu, 0x00000a59u, 0x00000a5bu,
++    0x0006000cu, 0x00000006u, 0x00000a9eu, 0x00000001u, 0x0000003au, 0x00000a5cu, 0x00060041u, 0x00000048u,
++    0x00000a9fu, 0x00000045u, 0x00000a43u, 0x00000a1bu, 0x0003003eu, 0x00000a9fu, 0x00000a9eu, 0x00050051u,
++    0x00000008u, 0x00000a68u, 0x0000051fu, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000a6au, 0x00000533u,
++    0x00000001u, 0x00050050u, 0x00000009u, 0x00000a6bu, 0x00000a68u, 0x00000a6au, 0x0006000cu, 0x00000006u,
++    0x00000aa4u, 0x00000001u, 0x0000003au, 0x00000a6bu, 0x00060041u, 0x00000048u, 0x00000aa5u, 0x00000045u,
++    0x00000a43u, 0x00000a2au, 0x0003003eu, 0x00000aa5u, 0x00000aa4u, 0x00050051u, 0x00000008u, 0x00000a77u,
++    0x00000529u, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000a79u, 0x0000053du, 0x00000001u, 0x00050050u,
++    0x00000009u, 0x00000a7au, 0x00000a77u, 0x00000a79u, 0x0006000cu, 0x00000006u, 0x00000aaau, 0x00000001u,
++    0x0000003au, 0x00000a7au, 0x00060041u, 0x00000048u, 0x00000aabu, 0x00000045u, 0x00000a43u, 0x00000a39u,
++    0x0003003eu, 0x00000aabu, 0x00000aaau, 0x000200f9u, 0x00000545u, 0x000200f8u, 0x00000545u, 0x000400e0u,
++    0x000000feu, 0x000000feu, 0x00000236u, 0x00050089u, 0x00000006u, 0x00000ac7u, 0x0000040cu, 0x0000023au,
++    0x00050084u, 0x00000006u, 0x00000ac8u, 0x00000238u, 0x00000ac7u, 0x0004007cu, 0x0000001eu, 0x00000ac9u,
++    0x00000ac8u, 0x00050086u, 0x00000006u, 0x00000acbu, 0x0000040cu, 0x0000023au, 0x0004007cu, 0x0000001eu,
++    0x00000accu, 0x00000acbu, 0x000200f9u, 0x00000aceu, 0x000200f8u, 0x00000aceu, 0x000700f5u, 0x0000001eu,
++    0x00000ea0u, 0x00000064u, 0x00000545u, 0x00000af3u, 0x00000ad2u, 0x000500b1u, 0x00000016u, 0x00000ad1u,
++    0x00000ea0u, 0x00000147u, 0x000400f6u, 0x00000af4u, 0x00000ad2u, 0x00000000u, 0x000400fau, 0x00000ad1u,
++    0x00000ad2u, 0x00000af4u, 0x000200f8u, 0x00000ad2u, 0x00050080u, 0x0000001eu, 0x00000ad9u, 0x00000ac9u,
++    0x00000ea0u, 0x0004007cu, 0x00000006u, 0x00000adbu, 0x00000ad9u, 0x00060041u, 0x00000048u, 0x00000b8eu,
++    0x00000045u, 0x00000acbu, 0x00000adbu, 0x0004003du, 0x00000006u, 0x00000b8fu, 0x00000b8eu, 0x0006000cu,
++    0x00000009u, 0x00000b90u, 0x00000001u, 0x0000003eu, 0x00000b8fu, 0x00050080u, 0x0000001eu, 0x00000ae4u,
++    0x00000ad9u, 0x00000065u, 0x0004007cu, 0x00000006u, 0x00000ae5u, 0x00000ae4u, 0x00060041u, 0x00000048u,
++    0x00000b95u, 0x00000045u, 0x00000acbu, 0x00000ae5u, 0x0004003du, 0x00000006u, 0x00000b96u, 0x00000b95u,
++    0x0006000cu, 0x00000009u, 0x00000b97u, 0x00000001u, 0x0000003eu, 0x00000b96u, 0x0005008eu, 0x00000009u,
++    0x00000aeau, 0x00000b90u, 0x0000026au, 0x00050041u, 0x0000000fu, 0x00000aebu, 0x00000ab4u, 0x00000ea0u,
++    0x0003003eu, 0x00000aebu, 0x00000aeau, 0x00050080u, 0x0000001eu, 0x00000aedu, 0x00000ea0u, 0x00000065u,
++    0x0005008eu, 0x00000009u, 0x00000aefu, 0x00000b97u, 0x00000270u, 0x00050041u, 0x0000000fu, 0x00000af0u,
++    0x00000ab4u, 0x00000aedu, 0x0003003eu, 0x00000af0u, 0x00000aefu, 0x00050080u, 0x0000001eu, 0x00000af3u,
++    0x00000ea0u, 0x00000069u, 0x000200f9u, 0x00000aceu, 0x000200f8u, 0x00000af4u, 0x000200f9u, 0x00000af5u,
++    0x000200f8u, 0x00000af5u, 0x000700f5u, 0x0000001eu, 0x00000ea1u, 0x00000069u, 0x00000af4u, 0x00000b0bu,
++    0x00000af9u, 0x000500b1u, 0x00000016u, 0x00000af8u, 0x00000ea1u, 0x0000027cu, 0x000400f6u, 0x00000b0cu,
++    0x00000af9u, 0x00000000u, 0x000400fau, 0x00000af8u, 0x00000af9u, 0x00000b0cu, 0x000200f8u, 0x00000af9u,
++    0x00050082u, 0x0000001eu, 0x00000afcu, 0x00000ea1u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000afdu,
++    0x00000ab4u, 0x00000afcu, 0x0004003du, 0x00000009u, 0x00000afeu, 0x00000afdu, 0x00050080u, 0x0000001eu,
++    0x00000b00u, 0x00000ea1u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000b01u, 0x00000ab4u, 0x00000b00u,
++    0x0004003du, 0x00000009u, 0x00000b02u, 0x00000b01u, 0x00050081u, 0x00000009u, 0x00000b03u, 0x00000afeu,
++    0x00000b02u, 0x0005008eu, 0x00000009u, 0x00000b04u, 0x00000b03u, 0x0000027fu, 0x00050041u, 0x0000000fu,
++    0x00000b05u, 0x00000ab4u, 0x00000ea1u, 0x0004003du, 0x00000009u, 0x00000b06u, 0x00000b05u, 0x00050083u,
++    0x00000009u, 0x00000b07u, 0x00000b06u, 0x00000b04u, 0x0003003eu, 0x00000b05u, 0x00000b07u, 0x00050080u,
++    0x0000001eu, 0x00000b0bu, 0x00000ea1u, 0x00000069u, 0x000200f9u, 0x00000af5u, 0x000200f8u, 0x00000b0cu,
++    0x000200f9u, 0x00000b0du, 0x000200f8u, 0x00000b0du, 0x000700f5u, 0x0000001eu, 0x00000ea2u, 0x0000006cu,
++    0x00000b0cu, 0x00000b23u, 0x00000b11u, 0x000500b1u, 0x00000016u, 0x00000b10u, 0x00000ea2u, 0x00000297u,
++    0x000400f6u, 0x00000b24u, 0x00000b11u, 0x00000000u, 0x000400fau, 0x00000b10u, 0x00000b11u, 0x00000b24u,
++    0x000200f8u, 0x00000b11u, 0x00050082u, 0x0000001eu, 0x00000b14u, 0x00000ea2u, 0x00000065u, 0x00050041u,
++    0x0000000fu, 0x00000b15u, 0x00000ab4u, 0x00000b14u, 0x0004003du, 0x00000009u, 0x00000b16u, 0x00000b15u,
++    0x00050080u, 0x0000001eu, 0x00000b18u, 0x00000ea2u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000b19u,
++    0x00000ab4u, 0x00000b18u, 0x0004003du, 0x00000009u, 0x00000b1au, 0x00000b19u, 0x00050081u, 0x00000009u,
++    0x00000b1bu, 0x00000b16u, 0x00000b1au, 0x0005008eu, 0x00000009u, 0x00000b1cu, 0x00000b1bu, 0x0000029au,
++    0x00050041u, 0x0000000fu, 0x00000b1du, 0x00000ab4u, 0x00000ea2u, 0x0004003du, 0x00000009u, 0x00000b1eu,
++    0x00000b1du, 0x00050083u, 0x00000009u, 0x00000b1fu, 0x00000b1eu, 0x00000b1cu, 0x0003003eu, 0x00000b1du,
++    0x00000b1fu, 0x00050080u, 0x0000001eu, 0x00000b23u, 0x00000ea2u, 0x00000069u, 0x000200f9u, 0x00000b0du,
++    0x000200f8u, 0x00000b24u, 0x000200f9u, 0x00000b25u, 0x000200f8u, 0x00000b25u, 0x000700f5u, 0x0000001eu,
++    0x00000ea3u, 0x000002acu, 0x00000b24u, 0x00000b3bu, 0x00000b29u, 0x000500b1u, 0x00000016u, 0x00000b28u,
++    0x00000ea3u, 0x000002b3u, 0x000400f6u, 0x00000b3cu, 0x00000b29u, 0x00000000u, 0x000400fau, 0x00000b28u,
++    0x00000b29u, 0x00000b3cu, 0x000200f8u, 0x00000b29u, 0x00050082u, 0x0000001eu, 0x00000b2cu, 0x00000ea3u,
++    0x00000065u, 0x00050041u, 0x0000000fu, 0x00000b2du, 0x00000ab4u, 0x00000b2cu, 0x0004003du, 0x00000009u,
++    0x00000b2eu, 0x00000b2du, 0x00050080u, 0x0000001eu, 0x00000b30u, 0x00000ea3u, 0x00000065u, 0x00050041u,
++    0x0000000fu, 0x00000b31u, 0x00000ab4u, 0x00000b30u, 0x0004003du, 0x00000009u, 0x00000b32u, 0x00000b31u,
++    0x00050081u, 0x00000009u, 0x00000b33u, 0x00000b2eu, 0x00000b32u, 0x0005008eu, 0x00000009u, 0x00000b34u,
++    0x00000b33u, 0x000002b6u, 0x00050041u, 0x0000000fu, 0x00000b35u, 0x00000ab4u, 0x00000ea3u, 0x0004003du,
++    0x00000009u, 0x00000b36u, 0x00000b35u, 0x00050083u, 0x00000009u, 0x00000b37u, 0x00000b36u, 0x00000b34u,
++    0x0003003eu, 0x00000b35u, 0x00000b37u, 0x00050080u, 0x0000001eu, 0x00000b3bu, 0x00000ea3u, 0x00000069u,
++    0x000200f9u, 0x00000b25u, 0x000200f8u, 0x00000b3cu, 0x000200f9u, 0x00000b3du, 0x000200f8u, 0x00000b3du,
++    0x000700f5u, 0x0000001eu, 0x00000ea4u, 0x00000072u, 0x00000b3cu, 0x00000b53u, 0x00000b41u, 0x000500b1u,
++    0x00000016u, 0x00000b40u, 0x00000ea4u, 0x000002ceu, 0x000400f6u, 0x00000b54u, 0x00000b41u, 0x00000000u,
++    0x000400fau, 0x00000b40u, 0x00000b41u, 0x00000b54u, 0x000200f8u, 0x00000b41u, 0x00050082u, 0x0000001eu,
++    0x00000b44u, 0x00000ea4u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000b45u, 0x00000ab4u, 0x00000b44u,
++    0x0004003du, 0x00000009u, 0x00000b46u, 0x00000b45u, 0x00050080u, 0x0000001eu, 0x00000b48u, 0x00000ea4u,
++    0x00000065u, 0x00050041u, 0x0000000fu, 0x00000b49u, 0x00000ab4u, 0x00000b48u, 0x0004003du, 0x00000009u,
++    0x00000b4au, 0x00000b49u, 0x00050081u, 0x00000009u, 0x00000b4bu, 0x00000b46u, 0x00000b4au, 0x0005008eu,
++    0x00000009u, 0x00000b4cu, 0x00000b4bu, 0x000002d1u, 0x00050041u, 0x0000000fu, 0x00000b4du, 0x00000ab4u,
++    0x00000ea4u, 0x0004003du, 0x00000009u, 0x00000b4eu, 0x00000b4du, 0x00050083u, 0x00000009u, 0x00000b4fu,
++    0x00000b4eu, 0x00000b4cu, 0x0003003eu, 0x00000b4du, 0x00000b4fu, 0x00050080u, 0x0000001eu, 0x00000b53u,
++    0x00000ea4u, 0x00000069u, 0x000200f9u, 0x00000b3du, 0x000200f8u, 0x00000b54u, 0x000400e0u, 0x000000feu,
++    0x000000feu, 0x00000236u, 0x000200f9u, 0x00000b55u, 0x000200f8u, 0x00000b55u, 0x000700f5u, 0x0000001eu,
++    0x00000ea5u, 0x00000069u, 0x00000b54u, 0x00000b88u, 0x00000b59u, 0x000500b1u, 0x00000016u, 0x00000b58u,
++    0x00000ea5u, 0x000002e9u, 0x000400f6u, 0x00000b89u, 0x00000b59u, 0x00000000u, 0x000400fau, 0x00000b58u,
++    0x00000b59u, 0x00000b89u, 0x000200f8u, 0x00000b59u, 0x00050084u, 0x0000001eu, 0x00000b5bu, 0x00000069u,
++    0x00000ea5u, 0x00050041u, 0x0000000fu, 0x00000b5du, 0x00000ab4u, 0x00000b5bu, 0x0004003du, 0x00000009u,
++    0x00000b5eu, 0x00000b5du, 0x00050080u, 0x0000001eu, 0x00000b61u, 0x00000b5bu, 0x00000065u, 0x00050041u,
++    0x0000000fu, 0x00000b62u, 0x00000ab4u, 0x00000b61u, 0x0004003du, 0x00000009u, 0x00000b63u, 0x00000b62u,
++    0x00050051u, 0x00000008u, 0x00000b65u, 0x00000b5eu, 0x00000000u, 0x00050051u, 0x00000008u, 0x00000b67u,
++    0x00000b63u, 0x00000000u, 0x00050050u, 0x00000009u, 0x00000b68u, 0x00000b65u, 0x00000b67u, 0x00050051u,
++    0x00000008u, 0x00000b6au, 0x00000b5eu, 0x00000001u, 0x00050051u, 0x00000008u, 0x00000b6cu, 0x00000b63u,
++    0x00000001u, 0x00050050u, 0x00000009u, 0x00000b6du, 0x00000b6au, 0x00000b6cu, 0x000500c3u, 0x0000001eu,
++    0x00000b70u, 0x00000ac9u, 0x00000065u, 0x00050082u, 0x0000001eu, 0x00000b72u, 0x00000ea5u, 0x00000069u,
++    0x00050080u, 0x0000001eu, 0x00000b73u, 0x00000b70u, 0x00000b72u, 0x0004007cu, 0x00000006u, 0x00000b75u,
++    0x00000b73u, 0x00050084u, 0x0000001eu, 0x00000b78u, 0x00000069u, 0x00000accu, 0x0004007cu, 0x00000006u,
++    0x00000b7au, 0x00000b78u, 0x0006000cu, 0x00000006u, 0x00000b9cu, 0x00000001u, 0x0000003au, 0x00000b68u,
++    0x00060041u, 0x00000048u, 0x00000b9du, 0x00000045u, 0x00000b75u, 0x00000b7au, 0x0003003eu, 0x00000b9du,
++    0x00000b9cu, 0x00050080u, 0x0000001eu, 0x00000b82u, 0x00000b78u, 0x00000065u, 0x0004007cu, 0x00000006u,
++    0x00000b83u, 0x00000b82u, 0x0006000cu, 0x00000006u, 0x00000ba2u, 0x00000001u, 0x0000003au, 0x00000b6du,
++    0x00060041u, 0x00000048u, 0x00000ba3u, 0x00000045u, 0x00000b75u, 0x00000b83u, 0x0003003eu, 0x00000ba3u,
++    0x00000ba2u, 0x00050080u, 0x0000001eu, 0x00000b88u, 0x00000ea5u, 0x00000065u, 0x000200f9u, 0x00000b55u,
++    0x000200f8u, 0x00000b89u, 0x000500b0u, 0x00000016u, 0x00000410u, 0x0000040cu, 0x0000019fu, 0x00050080u,
++    0x00000006u, 0x00000bc6u, 0x00000acbu, 0x0000019fu, 0x0004007cu, 0x0000001eu, 0x00000bc7u, 0x00000bc6u,
++    0x000300f7u, 0x00000c52u, 0x00000000u, 0x000400fau, 0x00000410u, 0x00000bcau, 0x00000c52u, 0x000200f8u,
++    0x00000bcau, 0x000200f9u, 0x00000bcbu, 0x000200f8u, 0x00000bcbu, 0x000700f5u, 0x0000001eu, 0x00000ea6u,
++    0x00000064u, 0x00000bcau, 0x00000bf0u, 0x00000bcfu, 0x000500b1u, 0x00000016u, 0x00000bceu, 0x00000ea6u,
++    0x00000147u, 0x000400f6u, 0x00000bf1u, 0x00000bcfu, 0x00000000u, 0x000400fau, 0x00000bceu, 0x00000bcfu,
++    0x00000bf1u, 0x000200f8u, 0x00000bcfu, 0x00050080u, 0x0000001eu, 0x00000bd6u, 0x00000ac9u, 0x00000ea6u,
++    0x0004007cu, 0x00000006u, 0x00000bd8u, 0x00000bd6u, 0x00060041u, 0x00000048u, 0x00000c8fu, 0x00000045u,
++    0x00000bc6u, 0x00000bd8u, 0x0004003du, 0x00000006u, 0x00000c90u, 0x00000c8fu, 0x0006000cu, 0x00000009u,
++    0x00000c91u, 0x00000001u, 0x0000003eu, 0x00000c90u, 0x00050080u, 0x0000001eu, 0x00000be1u, 0x00000bd6u,
++    0x00000065u, 0x0004007cu, 0x00000006u, 0x00000be2u, 0x00000be1u, 0x00060041u, 0x00000048u, 0x00000c96u,
++    0x00000045u, 0x00000bc6u, 0x00000be2u, 0x0004003du, 0x00000006u, 0x00000c97u, 0x00000c96u, 0x0006000cu,
++    0x00000009u, 0x00000c98u, 0x00000001u, 0x0000003eu, 0x00000c97u, 0x0005008eu, 0x00000009u, 0x00000be7u,
++    0x00000c91u, 0x0000026au, 0x00050041u, 0x0000000fu, 0x00000be8u, 0x00000bacu, 0x00000ea6u, 0x0003003eu,
++    0x00000be8u, 0x00000be7u, 0x00050080u, 0x0000001eu, 0x00000beau, 0x00000ea6u, 0x00000065u, 0x0005008eu,
++    0x00000009u, 0x00000becu, 0x00000c98u, 0x00000270u, 0x00050041u, 0x0000000fu, 0x00000bedu, 0x00000bacu,
++    0x00000beau, 0x0003003eu, 0x00000bedu, 0x00000becu, 0x00050080u, 0x0000001eu, 0x00000bf0u, 0x00000ea6u,
++    0x00000069u, 0x000200f9u, 0x00000bcbu, 0x000200f8u, 0x00000bf1u, 0x000200f9u, 0x00000bf2u, 0x000200f8u,
++    0x00000bf2u, 0x000700f5u, 0x0000001eu, 0x00000ea7u, 0x00000069u, 0x00000bf1u, 0x00000c08u, 0x00000bf6u,
++    0x000500b1u, 0x00000016u, 0x00000bf5u, 0x00000ea7u, 0x0000027cu, 0x000400f6u, 0x00000c09u, 0x00000bf6u,
++    0x00000000u, 0x000400fau, 0x00000bf5u, 0x00000bf6u, 0x00000c09u, 0x000200f8u, 0x00000bf6u, 0x00050082u,
++    0x0000001eu, 0x00000bf9u, 0x00000ea7u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000bfau, 0x00000bacu,
++    0x00000bf9u, 0x0004003du, 0x00000009u, 0x00000bfbu, 0x00000bfau, 0x00050080u, 0x0000001eu, 0x00000bfdu,
++    0x00000ea7u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000bfeu, 0x00000bacu, 0x00000bfdu, 0x0004003du,
++    0x00000009u, 0x00000bffu, 0x00000bfeu, 0x00050081u, 0x00000009u, 0x00000c00u, 0x00000bfbu, 0x00000bffu,
++    0x0005008eu, 0x00000009u, 0x00000c01u, 0x00000c00u, 0x0000027fu, 0x00050041u, 0x0000000fu, 0x00000c02u,
++    0x00000bacu, 0x00000ea7u, 0x0004003du, 0x00000009u, 0x00000c03u, 0x00000c02u, 0x00050083u, 0x00000009u,
++    0x00000c04u, 0x00000c03u, 0x00000c01u, 0x0003003eu, 0x00000c02u, 0x00000c04u, 0x00050080u, 0x0000001eu,
++    0x00000c08u, 0x00000ea7u, 0x00000069u, 0x000200f9u, 0x00000bf2u, 0x000200f8u, 0x00000c09u, 0x000200f9u,
++    0x00000c0au, 0x000200f8u, 0x00000c0au, 0x000700f5u, 0x0000001eu, 0x00000ea8u, 0x0000006cu, 0x00000c09u,
++    0x00000c20u, 0x00000c0eu, 0x000500b1u, 0x00000016u, 0x00000c0du, 0x00000ea8u, 0x00000297u, 0x000400f6u,
++    0x00000c21u, 0x00000c0eu, 0x00000000u, 0x000400fau, 0x00000c0du, 0x00000c0eu, 0x00000c21u, 0x000200f8u,
++    0x00000c0eu, 0x00050082u, 0x0000001eu, 0x00000c11u, 0x00000ea8u, 0x00000065u, 0x00050041u, 0x0000000fu,
++    0x00000c12u, 0x00000bacu, 0x00000c11u, 0x0004003du, 0x00000009u, 0x00000c13u, 0x00000c12u, 0x00050080u,
++    0x0000001eu, 0x00000c15u, 0x00000ea8u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000c16u, 0x00000bacu,
++    0x00000c15u, 0x0004003du, 0x00000009u, 0x00000c17u, 0x00000c16u, 0x00050081u, 0x00000009u, 0x00000c18u,
++    0x00000c13u, 0x00000c17u, 0x0005008eu, 0x00000009u, 0x00000c19u, 0x00000c18u, 0x0000029au, 0x00050041u,
++    0x0000000fu, 0x00000c1au, 0x00000bacu, 0x00000ea8u, 0x0004003du, 0x00000009u, 0x00000c1bu, 0x00000c1au,
++    0x00050083u, 0x00000009u, 0x00000c1cu, 0x00000c1bu, 0x00000c19u, 0x0003003eu, 0x00000c1au, 0x00000c1cu,
++    0x00050080u, 0x0000001eu, 0x00000c20u, 0x00000ea8u, 0x00000069u, 0x000200f9u, 0x00000c0au, 0x000200f8u,
++    0x00000c21u, 0x000200f9u, 0x00000c22u, 0x000200f8u, 0x00000c22u, 0x000700f5u, 0x0000001eu, 0x00000ea9u,
++    0x000002acu, 0x00000c21u, 0x00000c38u, 0x00000c26u, 0x000500b1u, 0x00000016u, 0x00000c25u, 0x00000ea9u,
++    0x000002b3u, 0x000400f6u, 0x00000c39u, 0x00000c26u, 0x00000000u, 0x000400fau, 0x00000c25u, 0x00000c26u,
++    0x00000c39u, 0x000200f8u, 0x00000c26u, 0x00050082u, 0x0000001eu, 0x00000c29u, 0x00000ea9u, 0x00000065u,
++    0x00050041u, 0x0000000fu, 0x00000c2au, 0x00000bacu, 0x00000c29u, 0x0004003du, 0x00000009u, 0x00000c2bu,
++    0x00000c2au, 0x00050080u, 0x0000001eu, 0x00000c2du, 0x00000ea9u, 0x00000065u, 0x00050041u, 0x0000000fu,
++    0x00000c2eu, 0x00000bacu, 0x00000c2du, 0x0004003du, 0x00000009u, 0x00000c2fu, 0x00000c2eu, 0x00050081u,
++    0x00000009u, 0x00000c30u, 0x00000c2bu, 0x00000c2fu, 0x0005008eu, 0x00000009u, 0x00000c31u, 0x00000c30u,
++    0x000002b6u, 0x00050041u, 0x0000000fu, 0x00000c32u, 0x00000bacu, 0x00000ea9u, 0x0004003du, 0x00000009u,
++    0x00000c33u, 0x00000c32u, 0x00050083u, 0x00000009u, 0x00000c34u, 0x00000c33u, 0x00000c31u, 0x0003003eu,
++    0x00000c32u, 0x00000c34u, 0x00050080u, 0x0000001eu, 0x00000c38u, 0x00000ea9u, 0x00000069u, 0x000200f9u,
++    0x00000c22u, 0x000200f8u, 0x00000c39u, 0x000200f9u, 0x00000c3au, 0x000200f8u, 0x00000c3au, 0x000700f5u,
++    0x0000001eu, 0x00000eaau, 0x00000072u, 0x00000c39u, 0x00000c50u, 0x00000c3eu, 0x000500b1u, 0x00000016u,
++    0x00000c3du, 0x00000eaau, 0x000002ceu, 0x000400f6u, 0x00000c51u, 0x00000c3eu, 0x00000000u, 0x000400fau,
++    0x00000c3du, 0x00000c3eu, 0x00000c51u, 0x000200f8u, 0x00000c3eu, 0x00050082u, 0x0000001eu, 0x00000c41u,
++    0x00000eaau, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000c42u, 0x00000bacu, 0x00000c41u, 0x0004003du,
++    0x00000009u, 0x00000c43u, 0x00000c42u, 0x00050080u, 0x0000001eu, 0x00000c45u, 0x00000eaau, 0x00000065u,
++    0x00050041u, 0x0000000fu, 0x00000c46u, 0x00000bacu, 0x00000c45u, 0x0004003du, 0x00000009u, 0x00000c47u,
++    0x00000c46u, 0x00050081u, 0x00000009u, 0x00000c48u, 0x00000c43u, 0x00000c47u, 0x0005008eu, 0x00000009u,
++    0x00000c49u, 0x00000c48u, 0x000002d1u, 0x00050041u, 0x0000000fu, 0x00000c4au, 0x00000bacu, 0x00000eaau,
++    0x0004003du, 0x00000009u, 0x00000c4bu, 0x00000c4au, 0x00050083u, 0x00000009u, 0x00000c4cu, 0x00000c4bu,
++    0x00000c49u, 0x0003003eu, 0x00000c4au, 0x00000c4cu, 0x00050080u, 0x0000001eu, 0x00000c50u, 0x00000eaau,
++    0x00000069u, 0x000200f9u, 0x00000c3au, 0x000200f8u, 0x00000c51u, 0x000200f9u, 0x00000c52u, 0x000200f8u,
++    0x00000c52u, 0x000400e0u, 0x000000feu, 0x000000feu, 0x00000236u, 0x000300f7u, 0x00000c8au, 0x00000000u,
++    0x000400fau, 0x00000410u, 0x00000c54u, 0x00000c8au, 0x000200f8u, 0x00000c54u, 0x000200f9u, 0x00000c55u,
++    0x000200f8u, 0x00000c55u, 0x000700f5u, 0x0000001eu, 0x00000eabu, 0x00000069u, 0x00000c54u, 0x00000c88u,
++    0x00000c59u, 0x000500b1u, 0x00000016u, 0x00000c58u, 0x00000eabu, 0x000002e9u, 0x000400f6u, 0x00000c89u,
++    0x00000c59u, 0x00000000u, 0x000400fau, 0x00000c58u, 0x00000c59u, 0x00000c89u, 0x000200f8u, 0x00000c59u,
++    0x00050084u, 0x0000001eu, 0x00000c5bu, 0x00000069u, 0x00000eabu, 0x00050041u, 0x0000000fu, 0x00000c5du,
++    0x00000bacu, 0x00000c5bu, 0x0004003du, 0x00000009u, 0x00000c5eu, 0x00000c5du, 0x00050080u, 0x0000001eu,
++    0x00000c61u, 0x00000c5bu, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000c62u, 0x00000bacu, 0x00000c61u,
++    0x0004003du, 0x00000009u, 0x00000c63u, 0x00000c62u, 0x00050051u, 0x00000008u, 0x00000c65u, 0x00000c5eu,
++    0x00000000u, 0x00050051u, 0x00000008u, 0x00000c67u, 0x00000c63u, 0x00000000u, 0x00050050u, 0x00000009u,
++    0x00000c68u, 0x00000c65u, 0x00000c67u, 0x00050051u, 0x00000008u, 0x00000c6au, 0x00000c5eu, 0x00000001u,
++    0x00050051u, 0x00000008u, 0x00000c6cu, 0x00000c63u, 0x00000001u, 0x00050050u, 0x00000009u, 0x00000c6du,
++    0x00000c6au, 0x00000c6cu, 0x000500c3u, 0x0000001eu, 0x00000c70u, 0x00000ac9u, 0x00000065u, 0x00050082u,
++    0x0000001eu, 0x00000c72u, 0x00000eabu, 0x00000069u, 0x00050080u, 0x0000001eu, 0x00000c73u, 0x00000c70u,
++    0x00000c72u, 0x0004007cu, 0x00000006u, 0x00000c75u, 0x00000c73u, 0x00050084u, 0x0000001eu, 0x00000c78u,
++    0x00000069u, 0x00000bc7u, 0x0004007cu, 0x00000006u, 0x00000c7au, 0x00000c78u, 0x0006000cu, 0x00000006u,
++    0x00000c9du, 0x00000001u, 0x0000003au, 0x00000c68u, 0x00060041u, 0x00000048u, 0x00000c9eu, 0x00000045u,
++    0x00000c75u, 0x00000c7au, 0x0003003eu, 0x00000c9eu, 0x00000c9du, 0x00050080u, 0x0000001eu, 0x00000c82u,
++    0x00000c78u, 0x00000065u, 0x0004007cu, 0x00000006u, 0x00000c83u, 0x00000c82u, 0x0006000cu, 0x00000006u,
++    0x00000ca3u, 0x00000001u, 0x0000003au, 0x00000c6du, 0x00060041u, 0x00000048u, 0x00000ca4u, 0x00000045u,
++    0x00000c75u, 0x00000c83u, 0x0003003eu, 0x00000ca4u, 0x00000ca3u, 0x00050080u, 0x0000001eu, 0x00000c88u,
++    0x00000eabu, 0x00000065u, 0x000200f9u, 0x00000c55u, 0x000200f8u, 0x00000c89u, 0x000200f9u, 0x00000c8au,
++    0x000200f8u, 0x00000c8au, 0x000400e0u, 0x000000feu, 0x000000feu, 0x00000236u, 0x000200f9u, 0x00000cc7u,
++    0x000200f8u, 0x00000cc7u, 0x000700f5u, 0x0000001eu, 0x00000eacu, 0x00000064u, 0x00000c8au, 0x00000cecu,
++    0x00000ccbu, 0x000500b1u, 0x00000016u, 0x00000ccau, 0x00000eacu, 0x00000147u, 0x000400f6u, 0x00000cedu,
++    0x00000ccbu, 0x00000000u, 0x000400fau, 0x00000ccau, 0x00000ccbu, 0x00000cedu, 0x000200f8u, 0x00000ccbu,
++    0x00050080u, 0x0000001eu, 0x00000cd2u, 0x00000ac9u, 0x00000eacu, 0x0004007cu, 0x00000006u, 0x00000cd4u,
++    0x00000cd2u, 0x00060041u, 0x00000048u, 0x00000d87u, 0x00000045u, 0x00000acbu, 0x00000cd4u, 0x0004003du,
++    0x00000006u, 0x00000d88u, 0x00000d87u, 0x0006000cu, 0x00000009u, 0x00000d89u, 0x00000001u, 0x0000003eu,
++    0x00000d88u, 0x00050080u, 0x0000001eu, 0x00000cddu, 0x00000cd2u, 0x00000065u, 0x0004007cu, 0x00000006u,
++    0x00000cdeu, 0x00000cddu, 0x00060041u, 0x00000048u, 0x00000d8eu, 0x00000045u, 0x00000acbu, 0x00000cdeu,
++    0x0004003du, 0x00000006u, 0x00000d8fu, 0x00000d8eu, 0x0006000cu, 0x00000009u, 0x00000d90u, 0x00000001u,
++    0x0000003eu, 0x00000d8fu, 0x0005008eu, 0x00000009u, 0x00000ce3u, 0x00000d89u, 0x0000026au, 0x00050041u,
++    0x0000000fu, 0x00000ce4u, 0x00000cadu, 0x00000eacu, 0x0003003eu, 0x00000ce4u, 0x00000ce3u, 0x00050080u,
++    0x0000001eu, 0x00000ce6u, 0x00000eacu, 0x00000065u, 0x0005008eu, 0x00000009u, 0x00000ce8u, 0x00000d90u,
++    0x00000270u, 0x00050041u, 0x0000000fu, 0x00000ce9u, 0x00000cadu, 0x00000ce6u, 0x0003003eu, 0x00000ce9u,
++    0x00000ce8u, 0x00050080u, 0x0000001eu, 0x00000cecu, 0x00000eacu, 0x00000069u, 0x000200f9u, 0x00000cc7u,
++    0x000200f8u, 0x00000cedu, 0x000200f9u, 0x00000ceeu, 0x000200f8u, 0x00000ceeu, 0x000700f5u, 0x0000001eu,
++    0x00000eadu, 0x00000069u, 0x00000cedu, 0x00000d04u, 0x00000cf2u, 0x000500b1u, 0x00000016u, 0x00000cf1u,
++    0x00000eadu, 0x0000027cu, 0x000400f6u, 0x00000d05u, 0x00000cf2u, 0x00000000u, 0x000400fau, 0x00000cf1u,
++    0x00000cf2u, 0x00000d05u, 0x000200f8u, 0x00000cf2u, 0x00050082u, 0x0000001eu, 0x00000cf5u, 0x00000eadu,
++    0x00000065u, 0x00050041u, 0x0000000fu, 0x00000cf6u, 0x00000cadu, 0x00000cf5u, 0x0004003du, 0x00000009u,
++    0x00000cf7u, 0x00000cf6u, 0x00050080u, 0x0000001eu, 0x00000cf9u, 0x00000eadu, 0x00000065u, 0x00050041u,
++    0x0000000fu, 0x00000cfau, 0x00000cadu, 0x00000cf9u, 0x0004003du, 0x00000009u, 0x00000cfbu, 0x00000cfau,
++    0x00050081u, 0x00000009u, 0x00000cfcu, 0x00000cf7u, 0x00000cfbu, 0x0005008eu, 0x00000009u, 0x00000cfdu,
++    0x00000cfcu, 0x0000027fu, 0x00050041u, 0x0000000fu, 0x00000cfeu, 0x00000cadu, 0x00000eadu, 0x0004003du,
++    0x00000009u, 0x00000cffu, 0x00000cfeu, 0x00050083u, 0x00000009u, 0x00000d00u, 0x00000cffu, 0x00000cfdu,
++    0x0003003eu, 0x00000cfeu, 0x00000d00u, 0x00050080u, 0x0000001eu, 0x00000d04u, 0x00000eadu, 0x00000069u,
++    0x000200f9u, 0x00000ceeu, 0x000200f8u, 0x00000d05u, 0x000200f9u, 0x00000d06u, 0x000200f8u, 0x00000d06u,
++    0x000700f5u, 0x0000001eu, 0x00000eaeu, 0x0000006cu, 0x00000d05u, 0x00000d1cu, 0x00000d0au, 0x000500b1u,
++    0x00000016u, 0x00000d09u, 0x00000eaeu, 0x00000297u, 0x000400f6u, 0x00000d1du, 0x00000d0au, 0x00000000u,
++    0x000400fau, 0x00000d09u, 0x00000d0au, 0x00000d1du, 0x000200f8u, 0x00000d0au, 0x00050082u, 0x0000001eu,
++    0x00000d0du, 0x00000eaeu, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d0eu, 0x00000cadu, 0x00000d0du,
++    0x0004003du, 0x00000009u, 0x00000d0fu, 0x00000d0eu, 0x00050080u, 0x0000001eu, 0x00000d11u, 0x00000eaeu,
++    0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d12u, 0x00000cadu, 0x00000d11u, 0x0004003du, 0x00000009u,
++    0x00000d13u, 0x00000d12u, 0x00050081u, 0x00000009u, 0x00000d14u, 0x00000d0fu, 0x00000d13u, 0x0005008eu,
++    0x00000009u, 0x00000d15u, 0x00000d14u, 0x0000029au, 0x00050041u, 0x0000000fu, 0x00000d16u, 0x00000cadu,
++    0x00000eaeu, 0x0004003du, 0x00000009u, 0x00000d17u, 0x00000d16u, 0x00050083u, 0x00000009u, 0x00000d18u,
++    0x00000d17u, 0x00000d15u, 0x0003003eu, 0x00000d16u, 0x00000d18u, 0x00050080u, 0x0000001eu, 0x00000d1cu,
++    0x00000eaeu, 0x00000069u, 0x000200f9u, 0x00000d06u, 0x000200f8u, 0x00000d1du, 0x000200f9u, 0x00000d1eu,
++    0x000200f8u, 0x00000d1eu, 0x000700f5u, 0x0000001eu, 0x00000eafu, 0x000002acu, 0x00000d1du, 0x00000d34u,
++    0x00000d22u, 0x000500b1u, 0x00000016u, 0x00000d21u, 0x00000eafu, 0x000002b3u, 0x000400f6u, 0x00000d35u,
++    0x00000d22u, 0x00000000u, 0x000400fau, 0x00000d21u, 0x00000d22u, 0x00000d35u, 0x000200f8u, 0x00000d22u,
++    0x00050082u, 0x0000001eu, 0x00000d25u, 0x00000eafu, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d26u,
++    0x00000cadu, 0x00000d25u, 0x0004003du, 0x00000009u, 0x00000d27u, 0x00000d26u, 0x00050080u, 0x0000001eu,
++    0x00000d29u, 0x00000eafu, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d2au, 0x00000cadu, 0x00000d29u,
++    0x0004003du, 0x00000009u, 0x00000d2bu, 0x00000d2au, 0x00050081u, 0x00000009u, 0x00000d2cu, 0x00000d27u,
++    0x00000d2bu, 0x0005008eu, 0x00000009u, 0x00000d2du, 0x00000d2cu, 0x000002b6u, 0x00050041u, 0x0000000fu,
++    0x00000d2eu, 0x00000cadu, 0x00000eafu, 0x0004003du, 0x00000009u, 0x00000d2fu, 0x00000d2eu, 0x00050083u,
++    0x00000009u, 0x00000d30u, 0x00000d2fu, 0x00000d2du, 0x0003003eu, 0x00000d2eu, 0x00000d30u, 0x00050080u,
++    0x0000001eu, 0x00000d34u, 0x00000eafu, 0x00000069u, 0x000200f9u, 0x00000d1eu, 0x000200f8u, 0x00000d35u,
++    0x000200f9u, 0x00000d36u, 0x000200f8u, 0x00000d36u, 0x000700f5u, 0x0000001eu, 0x00000eb0u, 0x00000072u,
++    0x00000d35u, 0x00000d4cu, 0x00000d3au, 0x000500b1u, 0x00000016u, 0x00000d39u, 0x00000eb0u, 0x000002ceu,
++    0x000400f6u, 0x00000d4du, 0x00000d3au, 0x00000000u, 0x000400fau, 0x00000d39u, 0x00000d3au, 0x00000d4du,
++    0x000200f8u, 0x00000d3au, 0x00050082u, 0x0000001eu, 0x00000d3du, 0x00000eb0u, 0x00000065u, 0x00050041u,
++    0x0000000fu, 0x00000d3eu, 0x00000cadu, 0x00000d3du, 0x0004003du, 0x00000009u, 0x00000d3fu, 0x00000d3eu,
++    0x00050080u, 0x0000001eu, 0x00000d41u, 0x00000eb0u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d42u,
++    0x00000cadu, 0x00000d41u, 0x0004003du, 0x00000009u, 0x00000d43u, 0x00000d42u, 0x00050081u, 0x00000009u,
++    0x00000d44u, 0x00000d3fu, 0x00000d43u, 0x0005008eu, 0x00000009u, 0x00000d45u, 0x00000d44u, 0x000002d1u,
++    0x00050041u, 0x0000000fu, 0x00000d46u, 0x00000cadu, 0x00000eb0u, 0x0004003du, 0x00000009u, 0x00000d47u,
++    0x00000d46u, 0x00050083u, 0x00000009u, 0x00000d48u, 0x00000d47u, 0x00000d45u, 0x0003003eu, 0x00000d46u,
++    0x00000d48u, 0x00050080u, 0x0000001eu, 0x00000d4cu, 0x00000eb0u, 0x00000069u, 0x000200f9u, 0x00000d36u,
++    0x000200f8u, 0x00000d4du, 0x000400e0u, 0x000000feu, 0x000000feu, 0x00000236u, 0x000200f9u, 0x00000d4eu,
++    0x000200f8u, 0x00000d4eu, 0x000700f5u, 0x0000001eu, 0x00000eb1u, 0x00000069u, 0x00000d4du, 0x00000d81u,
++    0x00000d52u, 0x000500b1u, 0x00000016u, 0x00000d51u, 0x00000eb1u, 0x000002e9u, 0x000400f6u, 0x00000d82u,
++    0x00000d52u, 0x00000000u, 0x000400fau, 0x00000d51u, 0x00000d52u, 0x00000d82u, 0x000200f8u, 0x00000d52u,
++    0x00050084u, 0x0000001eu, 0x00000d54u, 0x00000069u, 0x00000eb1u, 0x00050041u, 0x0000000fu, 0x00000d56u,
++    0x00000cadu, 0x00000d54u, 0x0004003du, 0x00000009u, 0x00000d57u, 0x00000d56u, 0x00050080u, 0x0000001eu,
++    0x00000d5au, 0x00000d54u, 0x00000065u, 0x00050041u, 0x0000000fu, 0x00000d5bu, 0x00000cadu, 0x00000d5au,
++    0x0004003du, 0x00000009u, 0x00000d5cu, 0x00000d5bu, 0x00050051u, 0x00000008u, 0x00000d5eu, 0x00000d57u,
++    0x00000000u, 0x00050051u, 0x00000008u, 0x00000d60u, 0x00000d5cu, 0x00000000u, 0x00050050u, 0x00000009u,
++    0x00000d61u, 0x00000d5eu, 0x00000d60u, 0x00050051u, 0x00000008u, 0x00000d63u, 0x00000d57u, 0x00000001u,
++    0x00050051u, 0x00000008u, 0x00000d65u, 0x00000d5cu, 0x00000001u, 0x00050050u, 0x00000009u, 0x00000d66u,
++    0x00000d63u, 0x00000d65u, 0x000500c3u, 0x0000001eu, 0x00000d69u, 0x00000ac9u, 0x00000065u, 0x00050082u,
++    0x0000001eu, 0x00000d6bu, 0x00000eb1u, 0x00000069u, 0x00050080u, 0x0000001eu, 0x00000d6cu, 0x00000d69u,
++    0x00000d6bu, 0x0004007cu, 0x00000006u, 0x00000d6eu, 0x00000d6cu, 0x00050084u, 0x0000001eu, 0x00000d71u,
++    0x00000069u, 0x00000accu, 0x0004007cu, 0x00000006u, 0x00000d73u, 0x00000d71u, 0x0006000cu, 0x00000006u,
++    0x00000d95u, 0x00000001u, 0x0000003au, 0x00000d61u, 0x00060041u, 0x00000048u, 0x00000d96u, 0x00000045u,
++    0x00000d6eu, 0x00000d73u, 0x0003003eu, 0x00000d96u, 0x00000d95u, 0x00050080u, 0x0000001eu, 0x00000d7bu,
++    0x00000d71u, 0x00000065u, 0x0004007cu, 0x00000006u, 0x00000d7cu, 0x00000d7bu, 0x0006000cu, 0x00000006u,
++    0x00000d9bu, 0x00000001u, 0x0000003au, 0x00000d66u, 0x00060041u, 0x00000048u, 0x00000d9cu, 0x00000045u,
++    0x00000d6eu, 0x00000d7cu, 0x0003003eu, 0x00000d9cu, 0x00000d9bu, 0x00050080u, 0x0000001eu, 0x00000d81u,
++    0x00000eb1u, 0x00000065u, 0x000200f9u, 0x00000d4eu, 0x000200f8u, 0x00000d82u, 0x000400e0u, 0x000000feu,
++    0x000000feu, 0x00000236u, 0x000200f9u, 0x0000041cu, 0x000200f8u, 0x0000041cu, 0x000700f5u, 0x0000001eu,
++    0x00000eb2u, 0x0000055bu, 0x00000d82u, 0x00000460u, 0x0000041fu, 0x000500b1u, 0x00000016u, 0x00000422u,
++    0x00000eb2u, 0x00000147u, 0x000400f6u, 0x0000041eu, 0x0000041fu, 0x00000000u, 0x000400fau, 0x00000422u,
++    0x0000041du, 0x0000041eu, 0x000200f8u, 0x0000041du, 0x000200f9u, 0x00000426u, 0x000200f8u, 0x00000426u,
++    0x000700f5u, 0x0000001eu, 0x00000eb3u, 0x00000559u, 0x0000041du, 0x0000045eu, 0x00000429u, 0x000500b1u,
++    0x00000016u, 0x0000042du, 0x00000eb3u, 0x0000042cu, 0x000400f6u, 0x00000428u, 0x00000429u, 0x00000000u,
++    0x000400fau, 0x0000042du, 0x00000427u, 0x00000428u, 0x000200f8u, 0x00000427u, 0x0004007cu, 0x00000006u,
++    0x00000430u, 0x00000eb2u, 0x0004007cu, 0x00000006u, 0x00000432u, 0x00000eb3u, 0x00060041u, 0x00000048u,
++    0x00000db8u, 0x00000045u, 0x00000430u, 0x00000432u, 0x0004003du, 0x00000006u, 0x00000db9u, 0x00000db8u,
++    0x0006000cu, 0x00000009u, 0x00000dbau, 0x00000001u, 0x0000003eu, 0x00000db9u, 0x000300f7u, 0x00000438u,
++    0x00000000u, 0x000400fau, 0x00000436u, 0x00000437u, 0x00000438u, 0x000200f8u, 0x00000437u, 0x00050081u,
++    0x00000009u, 0x0000043cu, 0x00000dbau, 0x00000ebeu, 0x000200f9u, 0x00000438u, 0x000200f8u, 0x00000438u,
++    0x000700f5u, 0x00000009u, 0x00000eb7u, 0x00000dbau, 0x00000427u, 0x0000043cu, 0x00000437u, 0x0004003du,
++    0x0000043du, 0x00000440u, 0x0000043fu, 0x00050084u, 0x0000001eu, 0x00000442u, 0x00000069u, 0x00000eb2u,
++    0x00050050u, 0x0000001fu, 0x00000445u, 0x00000442u, 0x00000eb3u, 0x0007004fu, 0x00000143u, 0x00000447u,
++    0x000004a1u, 0x000004a1u, 0x00000001u, 0x00000000u, 0x0004007cu, 0x0000001fu, 0x00000448u, 0x00000447u,
++    0x00050084u, 0x0000001fu, 0x0000044au, 0x00000ebfu, 0x00000448u, 0x00050080u, 0x0000001fu, 0x0000044bu,
++    0x00000445u, 0x0000044au, 0x0009004fu, 0x0000002cu, 0x0000044du, 0x00000eb7u, 0x00000eb7u, 0x00000000u,
++    0x00000000u, 0x00000000u, 0x00000000u, 0x00040063u, 0x00000440u, 0x0000044bu, 0x0000044du, 0x0004003du,
++    0x0000043du, 0x0000044eu, 0x0000043fu, 0x00050080u, 0x0000001eu, 0x00000451u, 0x00000442u, 0x00000065u,
++    0x00050050u, 0x0000001fu, 0x00000453u, 0x00000451u, 0x00000eb3u, 0x00050080u, 0x0000001fu, 0x00000459u,
++    0x00000453u, 0x0000044au, 0x0009004fu, 0x0000002cu, 0x0000045bu, 0x00000eb7u, 0x00000eb7u, 0x00000001u,
++    0x00000001u, 0x00000001u, 0x00000001u, 0x00040063u, 0x0000044eu, 0x00000459u, 0x0000045bu, 0x000200f9u,
++    0x00000429u, 0x000200f8u, 0x00000429u, 0x00050080u, 0x0000001eu, 0x0000045eu, 0x00000eb3u, 0x0000045cu,
++    0x000200f9u, 0x00000426u, 0x000200f8u, 0x00000428u, 0x000200f9u, 0x0000041fu, 0x000200f8u, 0x0000041fu,
++    0x00050080u, 0x0000001eu, 0x00000460u, 0x00000eb2u, 0x0000045cu, 0x000200f9u, 0x0000041cu, 0x000200f8u,
++    0x0000041eu, 0x000100fdu, 0x00010038u,
++};
++}

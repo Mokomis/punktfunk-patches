@@ -1,0 +1,688 @@
+{
+  "sustained": {
+    "phase": "sustained",
+    "first_90s": {
+      "samples": 2,
+      "mean_fps": 137.0,
+      "gpu_hz": [
+        1150000000,
+        975000000,
+        925000000
+      ],
+      "battery_temp_c": [
+        37.0,
+        36.5,
+        36.6
+      ]
+    },
+    "last_90s": {
+      "samples": 3,
+      "mean_fps": 123.96666666666667,
+      "gpu_hz": [
+        646000000,
+        646000000,
+        646000000
+      ],
+      "battery_temp_c": [
+        41.8,
+        41.8,
+        42.1
+      ]
+    },
+    "health": [
+      {
+        "elapsed_s": 0.04354391701053828,
+        "wall_time": 1791847118.3477519,
+        "gpu_hz": 1150000000,
+        "current_raw_vendor_units": 2462,
+        "voltage_uv": 3969000,
+        "battery_level": 69,
+        "battery_temp_tenths_c": 370,
+        "thermal_status": 1,
+        "decoded_fps_latest": null,
+        "handoff_latest": null
+      },
+      {
+        "elapsed_s": 30.622536208014935,
+        "wall_time": 1791847148.896905,
+        "gpu_hz": 975000000,
+        "current_raw_vendor_units": 3042,
+        "voltage_uv": 3949000,
+        "battery_level": 69,
+        "battery_temp_tenths_c": 365,
+        "thermal_status": 1,
+        "decoded_fps_latest": 136.7,
+        "handoff_latest": "handoff CPU avg_ms parse=0.184 record=0.180 fence_wait=3.351 observed_completion=3.732 present_submit=0.350 total=4.098 receipt_to_complete=4.223 queued=true fps=136.7 frames=600"
+      },
+      {
+        "elapsed_s": 61.203674208023585,
+        "wall_time": 1791847179.510345,
+        "gpu_hz": 925000000,
+        "current_raw_vendor_units": 2499,
+        "voltage_uv": 3939000,
+        "battery_level": 68,
+        "battery_temp_tenths_c": 366,
+        "thermal_status": 2,
+        "decoded_fps_latest": 137.3,
+        "handoff_latest": "handoff CPU avg_ms parse=0.172 record=0.170 fence_wait=3.360 observed_completion=3.734 present_submit=0.345 total=4.079 receipt_to_complete=4.181 queued=true fps=137.3 frames=600"
+      },
+      {
+        "elapsed_s": 91.77882029197644,
+        "wall_time": 1791847210.070966,
+        "gpu_hz": 1075000000,
+        "current_raw_vendor_units": 2801,
+        "voltage_uv": 3914000,
+        "battery_level": 68,
+        "battery_temp_tenths_c": 370,
+        "thermal_status": 2,
+        "decoded_fps_latest": 136.9,
+        "handoff_latest": "handoff CPU avg_ms parse=0.176 record=0.181 fence_wait=3.191 observed_completion=3.581 present_submit=0.359 total=3.940 receipt_to_complete=4.041 queued=true fps=136.9 frames=600"
+      },
+      {
+        "elapsed_s": 122.35266320803203,
+        "wall_time": 1791847240.662024,
+        "gpu_hz": 925000000,
+        "current_raw_vendor_units": 2915,
+        "voltage_uv": 3914000,
+        "battery_level": 68,
+        "battery_temp_tenths_c": 370,
+        "thermal_status": 2,
+        "decoded_fps_latest": 135.9,
+        "handoff_latest": "handoff CPU avg_ms parse=0.180 record=0.178 fence_wait=3.349 observed_completion=3.729 present_submit=0.350 total=4.090 receipt_to_complete=4.203 queued=true fps=135.9 frames=600"
+      },
+      {
+        "elapsed_s": 152.93941566697322,
+        "wall_time": 1791847271.2575092,
+        "gpu_hz": 1075000000,
+        "current_raw_vendor_units": 3252,
+        "voltage_uv": 3916000,
+        "battery_level": 67,
+        "battery_temp_tenths_c": 380,
+        "thermal_status": 3,
+        "decoded_fps_latest": 134.6,
+        "handoff_latest": "handoff CPU avg_ms parse=0.183 record=0.181 fence_wait=3.200 observed_completion=3.576 present_submit=0.345 total=3.942 receipt_to_complete=4.103 queued=true fps=134.6 frames=600"
+      },
+      {
+        "elapsed_s": 183.50305666704662,
+        "wall_time": 1791847301.8258371,
+        "gpu_hz": 1025000000,
+        "current_raw_vendor_units": 3253,
+        "voltage_uv": 3912000,
+        "battery_level": 67,
+        "battery_temp_tenths_c": 380,
+        "thermal_status": 3,
+        "decoded_fps_latest": 136.2,
+        "handoff_latest": "handoff CPU avg_ms parse=0.182 record=0.183 fence_wait=3.268 observed_completion=3.654 present_submit=0.355 total=4.022 receipt_to_complete=4.164 queued=true fps=136.2 frames=600"
+      },
+      {
+        "elapsed_s": 214.08288379199803,
+        "wall_time": 1791847332.461229,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2549,
+        "voltage_uv": 3915000,
+        "battery_level": 67,
+        "battery_temp_tenths_c": 391,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.1,
+        "handoff_latest": "handoff CPU avg_ms parse=0.445 record=0.309 fence_wait=5.934 observed_completion=6.562 present_submit=0.588 total=7.320 receipt_to_complete=10.003 queued=true fps=124.1 frames=600"
+      },
+      {
+        "elapsed_s": 244.63376145798247,
+        "wall_time": 1791847362.95572,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2746,
+        "voltage_uv": 3907000,
+        "battery_level": 66,
+        "battery_temp_tenths_c": 395,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.9,
+        "handoff_latest": "handoff CPU avg_ms parse=0.468 record=0.330 fence_wait=6.097 observed_completion=6.746 present_submit=0.608 total=7.547 receipt_to_complete=10.683 queued=true fps=124.9 frames=600"
+      },
+      {
+        "elapsed_s": 275.2204233329976,
+        "wall_time": 1791847393.560575,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2580,
+        "voltage_uv": 3928000,
+        "battery_level": 66,
+        "battery_temp_tenths_c": 400,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.0,
+        "handoff_latest": "handoff CPU avg_ms parse=0.448 record=0.336 fence_wait=6.059 observed_completion=6.720 present_submit=0.620 total=7.508 receipt_to_complete=10.435 queued=true fps=124.0 frames=600"
+      },
+      {
+        "elapsed_s": 305.799346792046,
+        "wall_time": 1791847424.13973,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2775,
+        "voltage_uv": 3918000,
+        "battery_level": 66,
+        "battery_temp_tenths_c": 400,
+        "thermal_status": 3,
+        "decoded_fps_latest": 123.5,
+        "handoff_latest": "handoff CPU avg_ms parse=0.456 record=0.334 fence_wait=5.963 observed_completion=6.564 present_submit=0.560 total=7.357 receipt_to_complete=9.990 queued=true fps=123.5 frames=600"
+      },
+      {
+        "elapsed_s": 336.3812462920323,
+        "wall_time": 1791847454.7436008,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2488,
+        "voltage_uv": 3910000,
+        "battery_level": 65,
+        "battery_temp_tenths_c": 405,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.3,
+        "handoff_latest": "handoff CPU avg_ms parse=0.453 record=0.329 fence_wait=6.048 observed_completion=6.681 present_submit=0.596 total=7.467 receipt_to_complete=10.351 queued=true fps=124.3 frames=600"
+      },
+      {
+        "elapsed_s": 366.9599285830045,
+        "wall_time": 1791847485.3089411,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2526,
+        "voltage_uv": 3905000,
+        "battery_level": 65,
+        "battery_temp_tenths_c": 405,
+        "thermal_status": 3,
+        "decoded_fps_latest": 123.6,
+        "handoff_latest": "handoff CPU avg_ms parse=0.443 record=0.341 fence_wait=6.069 observed_completion=6.722 present_submit=0.613 total=7.509 receipt_to_complete=10.420 queued=true fps=123.6 frames=600"
+      },
+      {
+        "elapsed_s": 397.53289925004356,
+        "wall_time": 1791847515.872154,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2605,
+        "voltage_uv": 3909000,
+        "battery_level": 65,
+        "battery_temp_tenths_c": 410,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.4,
+        "handoff_latest": "handoff CPU avg_ms parse=0.457 record=0.330 fence_wait=6.043 observed_completion=6.690 present_submit=0.608 total=7.479 receipt_to_complete=10.370 queued=true fps=124.4 frames=600"
+      },
+      {
+        "elapsed_s": 428.1119070829591,
+        "wall_time": 1791847546.430856,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2699,
+        "voltage_uv": 3901000,
+        "battery_level": 65,
+        "battery_temp_tenths_c": 410,
+        "thermal_status": 3,
+        "decoded_fps_latest": 125.3,
+        "handoff_latest": "handoff CPU avg_ms parse=0.454 record=0.330 fence_wait=6.015 observed_completion=6.639 present_submit=0.586 total=7.426 receipt_to_complete=10.266 queued=true fps=125.3 frames=600"
+      },
+      {
+        "elapsed_s": 458.68271404202096,
+        "wall_time": 1791847576.9611158,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2541,
+        "voltage_uv": 3893000,
+        "battery_level": 64,
+        "battery_temp_tenths_c": 414,
+        "thermal_status": 3,
+        "decoded_fps_latest": 125.6,
+        "handoff_latest": "handoff CPU avg_ms parse=0.440 record=0.326 fence_wait=5.958 observed_completion=6.586 present_submit=0.590 total=7.356 receipt_to_complete=9.971 queued=true fps=125.6 frames=600"
+      },
+      {
+        "elapsed_s": 489.2701484579593,
+        "wall_time": 1791847607.628777,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2945,
+        "voltage_uv": 3921000,
+        "battery_level": 64,
+        "battery_temp_tenths_c": 414,
+        "thermal_status": 3,
+        "decoded_fps_latest": 122.9,
+        "handoff_latest": "handoff CPU avg_ms parse=0.459 record=0.337 fence_wait=6.089 observed_completion=6.725 present_submit=0.596 total=7.524 receipt_to_complete=10.262 queued=true fps=122.9 frames=600"
+      },
+      {
+        "elapsed_s": 519.8466082499363,
+        "wall_time": 1791847638.176312,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2894,
+        "voltage_uv": 3883000,
+        "battery_level": 64,
+        "battery_temp_tenths_c": 418,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.0,
+        "handoff_latest": "handoff CPU avg_ms parse=0.457 record=0.326 fence_wait=6.078 observed_completion=6.717 present_submit=0.600 total=7.503 receipt_to_complete=10.382 queued=true fps=124.0 frames=600"
+      },
+      {
+        "elapsed_s": 550.4054221670376,
+        "wall_time": 1791847668.770761,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2686,
+        "voltage_uv": 3884000,
+        "battery_level": 64,
+        "battery_temp_tenths_c": 418,
+        "thermal_status": 3,
+        "decoded_fps_latest": 123.7,
+        "handoff_latest": "handoff CPU avg_ms parse=0.452 record=0.333 fence_wait=6.073 observed_completion=6.705 present_submit=0.592 total=7.494 receipt_to_complete=10.196 queued=true fps=123.7 frames=600"
+      },
+      {
+        "elapsed_s": 580.9851712499512,
+        "wall_time": 1791847699.318573,
+        "gpu_hz": 646000000,
+        "current_raw_vendor_units": 2807,
+        "voltage_uv": 3882000,
+        "battery_level": 63,
+        "battery_temp_tenths_c": 421,
+        "thermal_status": 3,
+        "decoded_fps_latest": 124.2,
+        "handoff_latest": "handoff CPU avg_ms parse=0.450 record=0.356 fence_wait=6.148 observed_completion=6.786 present_submit=0.598 total=7.595 receipt_to_complete=10.543 queued=true fps=124.2 frames=600"
+      }
+    ],
+    "gpu_stages": {
+      "reconstruction": {
+        "samples": 127,
+        "first_12_mean_ms": 1.8108333333333333,
+        "last_12_mean_ms": 2.2378333333333336
+      },
+      "dequant": {
+        "samples": 127,
+        "first_12_mean_ms": 1.0975833333333334,
+        "last_12_mean_ms": 2.41775
+      },
+      "display": {
+        "samples": 127,
+        "first_12_mean_ms": 1.2685833333333334,
+        "last_12_mean_ms": 1.4519166666666667
+      }
+    },
+    "controller_decode_samples_us": [
+      10514,
+      10335,
+      11026,
+      10339,
+      9642,
+      10175,
+      10277,
+      10486,
+      9713,
+      10116,
+      10328,
+      10491,
+      10785,
+      10677,
+      9896,
+      10054,
+      10134,
+      10000,
+      10741
+    ],
+    "controller_events": [
+      "10-12 18:22:01.111 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=787500 loss_ppm=0 owd_mean_us=13777 decode_mean_us=10514 encode_mean_us=1038 actual_kbps=1215457 flushed=false recovery_kf=0 reason=Decode",
+      "10-12 18:22:03.362 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=12921 decode_mean_us=10335 encode_mean_us=1045 actual_kbps=829950 flushed=false recovery_kf=0 reason=Decode",
+      "10-12 18:22:16.866 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=12848 decode_mean_us=11026 encode_mean_us=1037 actual_kbps=1181758 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:19.116 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=861329 loss_ppm=0 owd_mean_us=12983 decode_mean_us=10339 encode_mean_us=1110 actual_kbps=1023846 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:21.367 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=753663 loss_ppm=0 owd_mean_us=12631 decode_mean_us=9642 encode_mean_us=1365 actual_kbps=879402 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:23.618 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=861329 loss_ppm=0 owd_mean_us=11597 decode_mean_us=10175 encode_mean_us=1057 actual_kbps=771494 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:25.118 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=12426 decode_mean_us=10277 encode_mean_us=1275 actual_kbps=855151 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:49.875 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=11137 decode_mean_us=10486 encode_mean_us=1190 actual_kbps=1153028 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:52.126 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=861329 loss_ppm=0 owd_mean_us=11756 decode_mean_us=9713 encode_mean_us=1295 actual_kbps=965712 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:54.377 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=10672 decode_mean_us=10116 encode_mean_us=1128 actual_kbps=889817 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:22:55.878 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=11251 decode_mean_us=10328 encode_mean_us=1111 actual_kbps=1033310 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:23:45.392 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=12539 decode_mean_us=10491 encode_mean_us=1140 actual_kbps=1171266 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:23:47.642 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=11533 decode_mean_us=10785 encode_mean_us=1142 actual_kbps=1013953 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:25:25.171 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=13839 decode_mean_us=10677 encode_mean_us=1193 actual_kbps=1170622 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:25:27.422 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=861329 loss_ppm=0 owd_mean_us=14674 decode_mean_us=9896 encode_mean_us=1288 actual_kbps=1011989 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:25:29.672 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=12846 decode_mean_us=10054 encode_mean_us=1262 actual_kbps=904619 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:25:31.173 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=13279 decode_mean_us=10134 encode_mean_us=1138 actual_kbps=1008507 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:27:07.953 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=984375 loss_ppm=0 owd_mean_us=14690 decode_mean_us=10000 encode_mean_us=1356 actual_kbps=1135496 flushed=false recovery_kf=0 reason=Clean",
+      "10-12 18:27:10.203 17412   496 I punktfunk: punktfunk_core::abr: adaptive bitrate: requesting encoder re-target kbps=1125000 loss_ppm=0 owd_mean_us=12417 decode_mean_us=10741 encode_mean_us=979 actual_kbps=1023677 flushed=false recovery_kf=0 reason=Clean"
+    ],
+    "error_matches": []
+  },
+  "recovery": {
+    "phase": "recovery",
+    "first_90s": {
+      "samples": 2,
+      "mean_fps": 136.15,
+      "gpu_hz": [
+        925000000,
+        1075000000,
+        1075000000
+      ],
+      "battery_temp_c": [
+        40.4,
+        39.4,
+        39.3
+      ]
+    },
+    "last_90s": {
+      "samples": 3,
+      "mean_fps": 136.20000000000002,
+      "gpu_hz": [
+        1075000000,
+        1075000000,
+        891000000
+      ],
+      "battery_temp_c": [
+        39.4,
+        39.3,
+        39.6
+      ]
+    },
+    "health": [
+      {
+        "elapsed_s": 0.04111587500665337,
+        "wall_time": 1791847918.0566232,
+        "gpu_hz": 925000000,
+        "current_raw_vendor_units": 3054,
+        "voltage_uv": 3959000,
+        "battery_level": 63,
+        "battery_temp_tenths_c": 404,
+        "thermal_status": 1,
+        "decoded_fps_latest": null,
+        "handoff_latest": null
+      },
+      {
+        "elapsed_s": 30.62022791709751,
+        "wall_time": 1791847948.6400661,
+        "gpu_hz": 1075000000,
+        "current_raw_vendor_units": 2634,
+        "voltage_uv": 3850000,
+        "battery_level": 63,
+        "battery_temp_tenths_c": 394,
+        "thermal_status": 2,
+        "decoded_fps_latest": 136.5,
+        "handoff_latest": "handoff CPU avg_ms parse=0.153 record=0.166 fence_wait=3.395 observed_completion=3.778 present_submit=0.351 total=4.100 receipt_to_complete=4.203 queued=true fps=136.5 frames=600"
+      },
+      {
+        "elapsed_s": 61.159652709029615,
+        "wall_time": 1791847979.169923,
+        "gpu_hz": 1075000000,
+        "current_raw_vendor_units": 3209,
+        "voltage_uv": 3840000,
+        "battery_level": 62,
+        "battery_temp_tenths_c": 393,
+        "thermal_status": 2,
+        "decoded_fps_latest": 135.8,
+        "handoff_latest": "handoff CPU avg_ms parse=0.160 record=0.167 fence_wait=3.392 observed_completion=3.783 present_submit=0.361 total=4.112 receipt_to_complete=4.190 queued=true fps=135.8 frames=600"
+      },
+      {
+        "elapsed_s": 91.72002004203387,
+        "wall_time": 1791848009.739897,
+        "gpu_hz": 891000000,
+        "current_raw_vendor_units": 3133,
+        "voltage_uv": 3855000,
+        "battery_level": 62,
+        "battery_temp_tenths_c": 396,
+        "thermal_status": 3,
+        "decoded_fps_latest": 136.3,
+        "handoff_latest": "handoff CPU avg_ms parse=0.163 record=0.171 fence_wait=3.467 observed_completion=3.851 present_submit=0.352 total=4.187 receipt_to_complete=4.340 queued=true fps=136.3 frames=600"
+      }
+    ],
+    "gpu_stages": {
+      "reconstruction": {
+        "samples": 21,
+        "first_12_mean_ms": 1.8856666666666666,
+        "last_12_mean_ms": 1.9125
+      },
+      "dequant": {
+        "samples": 21,
+        "first_12_mean_ms": 1.1156666666666666,
+        "last_12_mean_ms": 1.1205833333333333
+      },
+      "display": {
+        "samples": 21,
+        "first_12_mean_ms": 1.0848333333333333,
+        "last_12_mean_ms": 1.09175
+      }
+    },
+    "controller_decode_samples_us": [],
+    "controller_events": [],
+    "error_matches": []
+  },
+  "packed_dequant": {
+    "planes_identical": 48,
+    "base": [
+      {
+        "ms": 2.213,
+        "clock_before": "195000000"
+      },
+      {
+        "ms": 2.407,
+        "clock_before": "195000000"
+      },
+      {
+        "ms": 2.457,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.532,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.459,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.539,
+        "clock_before": "195000000"
+      }
+    ],
+    "packed-word": [
+      {
+        "ms": 2.469,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.512,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.531,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.495,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.499,
+        "clock_before": "301000000"
+      },
+      {
+        "ms": 2.52,
+        "clock_before": "301000000"
+      }
+    ],
+    "base_mean_ms": 2.4345,
+    "packed-word_mean_ms": 2.5043333333333333,
+    "gain_percent": -2.8684877113712703,
+    "decision": "reject: no repeatable gain; later warm runs near parity",
+    "last_four_base_mean_ms": 2.49675,
+    "last_four_candidate_mean_ms": 2.51125
+  },
+  "sustained_pacing": {
+    "duration_observed_s": 580.9851712499512,
+    "thermal_groups": {
+      "1": {
+        "samples": 1,
+        "mean_latest_fps": 136.7,
+        "gpu_samples_hz": [
+          975000000
+        ]
+      },
+      "2": {
+        "samples": 3,
+        "mean_latest_fps": 136.70000000000002,
+        "gpu_samples_hz": [
+          925000000,
+          1075000000,
+          925000000
+        ]
+      },
+      "3": {
+        "samples": 15,
+        "mean_latest_fps": 125.68666666666667,
+        "gpu_samples_hz": [
+          1075000000,
+          1025000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000,
+          646000000
+        ]
+      }
+    },
+    "first_battery_level": 69,
+    "last_battery_level": 63,
+    "first_battery_temp_c": 37.0,
+    "last_battery_temp_c": 42.1,
+    "pacing": {
+      "observed_unique_frames": 76871,
+      "observed_adjacent_intervals": 76869,
+      "refresh_period_ms": 6.944444,
+      "median_present_interval_ms": 6.948386,
+      "p95_present_interval_ms": 13.897969,
+      "one_refresh_percent": 88.63130780939,
+      "two_refresh_percent": 10.540009626767617,
+      "longer_percent": 0.8286825638423811,
+      "longest_observed_ms": 264.020365
+    },
+    "memory": [
+      {
+        "elapsed_s": 0,
+        "pss_kb": 464678,
+        "rss_kb": 645216
+      },
+      {
+        "elapsed_s": 60,
+        "pss_kb": 470622,
+        "rss_kb": 652056
+      },
+      {
+        "elapsed_s": 120,
+        "pss_kb": 472073,
+        "rss_kb": 653660
+      },
+      {
+        "elapsed_s": 181,
+        "pss_kb": 472041,
+        "rss_kb": 653752
+      },
+      {
+        "elapsed_s": 241,
+        "pss_kb": 475841,
+        "rss_kb": 657648
+      },
+      {
+        "elapsed_s": 301,
+        "pss_kb": 476353,
+        "rss_kb": 658336
+      },
+      {
+        "elapsed_s": 362,
+        "pss_kb": 476650,
+        "rss_kb": 658724
+      },
+      {
+        "elapsed_s": 422,
+        "pss_kb": 476178,
+        "rss_kb": 658304
+      },
+      {
+        "elapsed_s": 482,
+        "pss_kb": 478386,
+        "rss_kb": 660568
+      },
+      {
+        "elapsed_s": 543,
+        "pss_kb": 478978,
+        "rss_kb": 661208
+      }
+    ],
+    "power_note": "current_now vendor units were not verified; no watt estimate"
+  },
+  "cooling_before": [
+    {
+      "elapsed_s": 0,
+      "temperature_tenths_c": 383,
+      "thermal_status": 2
+    },
+    {
+      "elapsed_s": 30,
+      "temperature_tenths_c": 383,
+      "thermal_status": 1
+    },
+    {
+      "elapsed_s": 60,
+      "temperature_tenths_c": 381,
+      "thermal_status": 1
+    },
+    {
+      "elapsed_s": 90,
+      "temperature_tenths_c": 381,
+      "thermal_status": 1
+    },
+    {
+      "elapsed_s": 120,
+      "temperature_tenths_c": 375,
+      "thermal_status": 1
+    },
+    {
+      "elapsed_s": 150,
+      "temperature_tenths_c": 375,
+      "thermal_status": 1
+    },
+    {
+      "elapsed_s": 180,
+      "temperature_tenths_c": 370,
+      "thermal_status": 1
+    }
+  ],
+  "cooling_after": [
+    {
+      "elapsed_s": 0,
+      "temperature_tenths_c": 421,
+      "thermal_status": 3
+    },
+    {
+      "elapsed_s": 30,
+      "temperature_tenths_c": 421,
+      "thermal_status": 3
+    },
+    {
+      "elapsed_s": 60,
+      "temperature_tenths_c": 423,
+      "thermal_status": 3
+    },
+    {
+      "elapsed_s": 90,
+      "temperature_tenths_c": 420,
+      "thermal_status": 2
+    },
+    {
+      "elapsed_s": 120,
+      "temperature_tenths_c": 415,
+      "thermal_status": 2
+    },
+    {
+      "elapsed_s": 150,
+      "temperature_tenths_c": 415,
+      "thermal_status": 2
+    },
+    {
+      "elapsed_s": 180,
+      "temperature_tenths_c": 404,
+      "thermal_status": 1
+    }
+  ],
+  "final_state": {
+    "driver": "turnip",
+    "profiling": "disabled",
+    "rotation": "automatic",
+    "quality_settings": "unchanged",
+    "thermal_limits": "managed by Android"
+  }
+}

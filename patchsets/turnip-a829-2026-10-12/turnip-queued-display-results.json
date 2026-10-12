@@ -1,0 +1,450 @@
+{
+  "control1": {
+    "pid": "14008",
+    "reported_windows": 8,
+    "retained_windows": 6,
+    "windows": [
+      {
+        "parse": 0.529,
+        "record": 0.369,
+        "fence_wait": 6.75,
+        "observed_completion": 6.797,
+        "present_submit": 0.771,
+        "total": 8.472,
+        "receipt_to_complete": 11.479,
+        "fps": 114.3,
+        "queued": false
+      },
+      {
+        "parse": 0.552,
+        "record": 0.373,
+        "fence_wait": 6.675,
+        "observed_completion": 6.725,
+        "present_submit": 0.816,
+        "total": 8.472,
+        "receipt_to_complete": 11.947,
+        "fps": 114.7,
+        "queued": false
+      },
+      {
+        "parse": 0.568,
+        "record": 0.381,
+        "fence_wait": 6.67,
+        "observed_completion": 6.724,
+        "present_submit": 0.834,
+        "total": 8.512,
+        "receipt_to_complete": 11.532,
+        "fps": 112.6,
+        "queued": false
+      },
+      {
+        "parse": 0.588,
+        "record": 0.382,
+        "fence_wait": 6.64,
+        "observed_completion": 6.691,
+        "present_submit": 0.853,
+        "total": 8.519,
+        "receipt_to_complete": 12.077,
+        "fps": 113.6,
+        "queued": false
+      },
+      {
+        "parse": 0.553,
+        "record": 0.386,
+        "fence_wait": 6.655,
+        "observed_completion": 6.704,
+        "present_submit": 0.808,
+        "total": 8.456,
+        "receipt_to_complete": 11.649,
+        "fps": 114.5,
+        "queued": false
+      },
+      {
+        "parse": 0.581,
+        "record": 0.378,
+        "fence_wait": 6.621,
+        "observed_completion": 6.672,
+        "present_submit": 0.847,
+        "total": 8.482,
+        "receipt_to_complete": 11.786,
+        "fps": 113.5,
+        "queued": false
+      }
+    ],
+    "means": {
+      "parse": 0.5618333333333333,
+      "record": 0.37816666666666665,
+      "fence_wait": 6.6685,
+      "observed_completion": 6.718833333333333,
+      "present_submit": 0.8215,
+      "total": 8.4855,
+      "receipt_to_complete": 11.745,
+      "fps": 113.86666666666666
+    }
+  },
+  "queued1": {
+    "pid": "16562",
+    "reported_windows": 8,
+    "retained_windows": 6,
+    "windows": [
+      {
+        "parse": 0.578,
+        "record": 0.442,
+        "fence_wait": 5.418,
+        "observed_completion": 6.17,
+        "present_submit": 0.696,
+        "total": 7.194,
+        "receipt_to_complete": 9.968,
+        "fps": 131.7,
+        "queued": true
+      },
+      {
+        "parse": 0.554,
+        "record": 0.423,
+        "fence_wait": 5.409,
+        "observed_completion": 6.15,
+        "present_submit": 0.685,
+        "total": 7.131,
+        "receipt_to_complete": 9.659,
+        "fps": 131.7,
+        "queued": true
+      },
+      {
+        "parse": 0.65,
+        "record": 0.43,
+        "fence_wait": 5.458,
+        "observed_completion": 6.216,
+        "present_submit": 0.702,
+        "total": 7.299,
+        "receipt_to_complete": 10.347,
+        "fps": 131.6,
+        "queued": true
+      },
+      {
+        "parse": 0.602,
+        "record": 0.428,
+        "fence_wait": 5.472,
+        "observed_completion": 6.201,
+        "present_submit": 0.674,
+        "total": 7.235,
+        "receipt_to_complete": 10.212,
+        "fps": 130.7,
+        "queued": true
+      },
+      {
+        "parse": 0.573,
+        "record": 0.405,
+        "fence_wait": 5.654,
+        "observed_completion": 6.385,
+        "present_submit": 0.678,
+        "total": 7.366,
+        "receipt_to_complete": 10.401,
+        "fps": 131.9,
+        "queued": true
+      },
+      {
+        "parse": 0.603,
+        "record": 0.424,
+        "fence_wait": 5.579,
+        "observed_completion": 6.321,
+        "present_submit": 0.684,
+        "total": 7.352,
+        "receipt_to_complete": 10.529,
+        "fps": 131.5,
+        "queued": true
+      }
+    ],
+    "means": {
+      "parse": 0.5933333333333333,
+      "record": 0.42533333333333334,
+      "fence_wait": 5.498333333333333,
+      "observed_completion": 6.2405,
+      "present_submit": 0.6865,
+      "total": 7.262833333333333,
+      "receipt_to_complete": 10.186,
+      "fps": 131.51666666666665
+    }
+  },
+  "control2": {
+    "pid": "28837",
+    "reported_windows": 9,
+    "retained_windows": 7,
+    "windows": [
+      {
+        "parse": 0.455,
+        "record": 0.259,
+        "fence_wait": 4.152,
+        "observed_completion": 4.199,
+        "present_submit": 0.729,
+        "total": 5.646,
+        "receipt_to_complete": 6.082,
+        "fps": 136.5,
+        "queued": false
+      },
+      {
+        "parse": 0.432,
+        "record": 0.247,
+        "fence_wait": 4.071,
+        "observed_completion": 4.115,
+        "present_submit": 0.755,
+        "total": 5.553,
+        "receipt_to_complete": 5.885,
+        "fps": 137.3,
+        "queued": false
+      },
+      {
+        "parse": 0.447,
+        "record": 0.288,
+        "fence_wait": 4.06,
+        "observed_completion": 4.107,
+        "present_submit": 0.758,
+        "total": 5.605,
+        "receipt_to_complete": 6.108,
+        "fps": 136.9,
+        "queued": false
+      },
+      {
+        "parse": 0.467,
+        "record": 0.278,
+        "fence_wait": 4.303,
+        "observed_completion": 4.35,
+        "present_submit": 0.76,
+        "total": 5.86,
+        "receipt_to_complete": 6.344,
+        "fps": 136.4,
+        "queued": false
+      },
+      {
+        "parse": 0.468,
+        "record": 0.276,
+        "fence_wait": 4.079,
+        "observed_completion": 4.125,
+        "present_submit": 0.827,
+        "total": 5.699,
+        "receipt_to_complete": 6.326,
+        "fps": 137.6,
+        "queued": false
+      },
+      {
+        "parse": 0.399,
+        "record": 0.265,
+        "fence_wait": 4.109,
+        "observed_completion": 4.155,
+        "present_submit": 0.782,
+        "total": 5.605,
+        "receipt_to_complete": 5.95,
+        "fps": 136.4,
+        "queued": false
+      },
+      {
+        "parse": 0.447,
+        "record": 0.259,
+        "fence_wait": 4.297,
+        "observed_completion": 4.342,
+        "present_submit": 0.786,
+        "total": 5.839,
+        "receipt_to_complete": 6.252,
+        "fps": 136.2,
+        "queued": false
+      }
+    ],
+    "means": {
+      "parse": 0.445,
+      "record": 0.26742857142857146,
+      "fence_wait": 4.153,
+      "observed_completion": 4.199,
+      "present_submit": 0.771,
+      "total": 5.686714285714286,
+      "receipt_to_complete": 6.135285714285714,
+      "fps": 136.75714285714287
+    }
+  },
+  "queued2": {
+    "pid": "31585",
+    "reported_windows": 9,
+    "retained_windows": 7,
+    "windows": [
+      {
+        "parse": 0.35,
+        "record": 0.275,
+        "fence_wait": 3.399,
+        "observed_completion": 4.07,
+        "present_submit": 0.622,
+        "total": 4.698,
+        "receipt_to_complete": 4.812,
+        "fps": 137.2,
+        "queued": true
+      },
+      {
+        "parse": 0.369,
+        "record": 0.284,
+        "fence_wait": 3.224,
+        "observed_completion": 3.911,
+        "present_submit": 0.633,
+        "total": 4.568,
+        "receipt_to_complete": 4.75,
+        "fps": 136.6,
+        "queued": true
+      },
+      {
+        "parse": 0.343,
+        "record": 0.269,
+        "fence_wait": 3.18,
+        "observed_completion": 3.837,
+        "present_submit": 0.604,
+        "total": 4.452,
+        "receipt_to_complete": 4.578,
+        "fps": 137.3,
+        "queued": true
+      },
+      {
+        "parse": 0.378,
+        "record": 0.272,
+        "fence_wait": 3.411,
+        "observed_completion": 4.079,
+        "present_submit": 0.614,
+        "total": 4.732,
+        "receipt_to_complete": 4.854,
+        "fps": 137.1,
+        "queued": true
+      },
+      {
+        "parse": 0.388,
+        "record": 0.279,
+        "fence_wait": 3.319,
+        "observed_completion": 4.005,
+        "present_submit": 0.633,
+        "total": 4.675,
+        "receipt_to_complete": 4.823,
+        "fps": 136.1,
+        "queued": true
+      },
+      {
+        "parse": 0.336,
+        "record": 0.266,
+        "fence_wait": 3.242,
+        "observed_completion": 3.856,
+        "present_submit": 0.563,
+        "total": 4.46,
+        "receipt_to_complete": 4.636,
+        "fps": 137.4,
+        "queued": true
+      },
+      {
+        "parse": 0.352,
+        "record": 0.268,
+        "fence_wait": 3.284,
+        "observed_completion": 3.94,
+        "present_submit": 0.605,
+        "total": 4.563,
+        "receipt_to_complete": 4.703,
+        "fps": 137.7,
+        "queued": true
+      }
+    ],
+    "means": {
+      "parse": 0.35942857142857143,
+      "record": 0.2732857142857143,
+      "fence_wait": 3.294142857142857,
+      "observed_completion": 3.956857142857143,
+      "present_submit": 0.6105714285714285,
+      "total": 4.5925714285714285,
+      "receipt_to_complete": 4.736571428571429,
+      "fps": 137.05714285714285
+    }
+  },
+  "final-queued": {
+    "pid": "15341",
+    "reported_windows": 8,
+    "retained_windows": 6,
+    "windows": [
+      {
+        "parse": 0.375,
+        "record": 0.278,
+        "fence_wait": 3.214,
+        "observed_completion": 3.874,
+        "present_submit": 0.609,
+        "total": 4.53,
+        "receipt_to_complete": 4.664,
+        "fps": 135.9,
+        "queued": true
+      },
+      {
+        "parse": 0.357,
+        "record": 0.273,
+        "fence_wait": 3.341,
+        "observed_completion": 4.004,
+        "present_submit": 0.611,
+        "total": 4.637,
+        "receipt_to_complete": 4.755,
+        "fps": 137.2,
+        "queued": true
+      },
+      {
+        "parse": 0.334,
+        "record": 0.258,
+        "fence_wait": 3.357,
+        "observed_completion": 3.984,
+        "present_submit": 0.576,
+        "total": 4.579,
+        "receipt_to_complete": 4.666,
+        "fps": 136.4,
+        "queued": true
+      },
+      {
+        "parse": 0.366,
+        "record": 0.278,
+        "fence_wait": 3.278,
+        "observed_completion": 3.92,
+        "present_submit": 0.591,
+        "total": 4.566,
+        "receipt_to_complete": 4.728,
+        "fps": 138.0,
+        "queued": true
+      },
+      {
+        "parse": 0.332,
+        "record": 0.256,
+        "fence_wait": 2.995,
+        "observed_completion": 3.61,
+        "present_submit": 0.566,
+        "total": 4.201,
+        "receipt_to_complete": 4.311,
+        "fps": 137.2,
+        "queued": true
+      },
+      {
+        "parse": 0.348,
+        "record": 0.269,
+        "fence_wait": 3.176,
+        "observed_completion": 3.823,
+        "present_submit": 0.597,
+        "total": 4.443,
+        "receipt_to_complete": 4.563,
+        "fps": 137.1,
+        "queued": true
+      }
+    ],
+    "means": {
+      "parse": 0.352,
+      "record": 0.26866666666666666,
+      "fence_wait": 3.2268333333333334,
+      "observed_completion": 3.8691666666666666,
+      "present_submit": 0.5916666666666667,
+      "total": 4.492666666666667,
+      "receipt_to_complete": 4.6145,
+      "fps": 136.96666666666667
+    }
+  },
+  "_metadata": {
+    "clock_control": "adaptive; cap attempts excluded from headline",
+    "headline_control": "control2",
+    "headline_candidate": "queued2",
+    "cpu_handoff_reduction_ms": 1.0941428571428577,
+    "fps_gain_established": false,
+    "user_motion_check": "Looks clean",
+    "automatic_driver": "MESA_TURNIP",
+    "automatic_device_id": "0x44030a20",
+    "apk_sha256": "f2c5378a0fac4af78eee3c7b3a99f3fffb0d3fe5373c84f727cad77329ed741b"
+  }
+}

@@ -1,0 +1,242 @@
+diff --git a/clients/android/app/build.gradle.kts b/clients/android/app/build.gradle.kts
+index 818bda63e..f59fb7084 100644
+--- a/clients/android/app/build.gradle.kts
++++ b/clients/android/app/build.gradle.kts
+@@ -103,7 +103,7 @@ android {
+     }
+     packaging {
+         jniLibs {
+-            useLegacyPackaging = false
++            useLegacyPackaging = true
+         }
+     }
+ }
+diff --git a/clients/android/kit/build.gradle.kts b/clients/android/kit/build.gradle.kts
+index 2949cf6b0..f99eb906d 100644
+--- a/clients/android/kit/build.gradle.kts
++++ b/clients/android/kit/build.gradle.kts
+@@ -26,7 +26,7 @@ android {
+         sourceCompatibility = JavaVersion.VERSION_21
+         targetCompatibility = JavaVersion.VERSION_21
+     }
+-    packaging { jniLibs { useLegacyPackaging = false } } // 16 KB-page friendly
++    packaging { jniLibs { useLegacyPackaging = true } } // AdrenoTools hooks need extracted native libraries
+ }
+ 
+ kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_21) } }
+@@ -219,6 +219,13 @@ fun registerCargoNdk(taskName: String, release: Boolean) =
+         // cargo-ndk only adds to jniLibs. Empty it first, so no library an older tree built ships.
+         val jniLibs = file("src/main/jniLibs")
+         doFirst { jniLibs.deleteRecursively() }
++        // Restore the diagnostic driver after cargo clears its generated library folder.
++        doLast {
++            copy {
++                from("src/turnipJniLibs")
++                into(jniLibs)
++            }
++        }
+         cargoNdkEnvironment()
+         // Resolve cargo by ABSOLUTE path: Gradle's Exec resolves command[0] via the JVM's
+         // inherited PATH, NOT the environment("PATH", …) set above (that only reaches the spawned
+diff --git a/clients/android/native/src/pyro/device.rs b/clients/android/native/src/pyro/device.rs
+index 00a32525f..a436125f6 100644
+--- a/clients/android/native/src/pyro/device.rs
++++ b/clients/android/native/src/pyro/device.rs
+@@ -16,6 +16,54 @@ use ash::vk;
+ use pf_client_video::video_vk::{QueueLock, VulkanDecodeDevice};
+ use std::ffi::CString;
+ 
++/// Keep AdrenoTools and its Vulkan namespace live for the process.
++/// Driver selection is diagnostic and takes effect after restarting the app.
++fn load_entry() -> Result<ash::Entry> {
++    if crate::sys::sysprop(c"debug.punktfunk.vulkan_driver").as_deref() != Some("turnip") {
++        // SAFETY: Entry owns the system loader until its Vulkan objects are destroyed.
++        return unsafe { ash::Entry::load() }.map_err(|e| anyhow!("load system Vulkan: {e}"));
++    }
++    static TURNIP: std::sync::OnceLock<std::result::Result<ash::StaticFn, String>> =
++        std::sync::OnceLock::new();
++    let functions = TURNIP.get_or_init(|| {
++        (|| -> Result<ash::StaticFn> {
++            let maps = std::fs::read_to_string("/proc/self/maps")?;
++            let library = maps.lines()
++                .filter_map(|line| line.split_whitespace().last())
++                .find(|path| path.ends_with("/libpunktfunk_android.so"))
++                .ok_or_else(|| anyhow!("find extracted Android native library directory"))?;
++            let directory = std::path::Path::new(library).parent()
++                .ok_or_else(|| anyhow!("native library directory"))?;
++            let tools = CString::new(directory.join("libadrenotools.so").to_string_lossy().as_bytes())?;
++            let directory = CString::new(format!("{}/", directory.display()))?;
++            type Open = unsafe extern "C" fn(i32, i32, *const libc::c_char,
++                *const libc::c_char, *const libc::c_char, *const libc::c_char,
++                *const libc::c_char, *mut *mut libc::c_void) -> *mut libc::c_void;
++            // SAFETY: bundled libraries are in the app's extracted native directory. Both
++            // handles stay open for the process, outliving every Entry and Vulkan object.
++            unsafe {
++                let handle = libc::dlopen(tools.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
++                if handle.is_null() { bail!("load bundled AdrenoTools"); }
++                let symbol = libc::dlsym(handle, c"adrenotools_open_libvulkan".as_ptr());
++                if symbol.is_null() { bail!("resolve AdrenoTools Vulkan entry point"); }
++                let open: Open = std::mem::transmute(symbol);
++                let loader = open(libc::RTLD_NOW | libc::RTLD_LOCAL, 1, std::ptr::null(),
++                    directory.as_ptr(), directory.as_ptr(), c"libvulkan_freedreno.so".as_ptr(),
++                    std::ptr::null(), std::ptr::null_mut());
++                if loader.is_null() { bail!("open bundled Turnip Vulkan loader"); }
++                let symbol = libc::dlsym(loader, c"vkGetInstanceProcAddr".as_ptr());
++                if symbol.is_null() { bail!("resolve Turnip vkGetInstanceProcAddr"); }
++                Ok(ash::StaticFn { get_instance_proc_addr: std::mem::transmute(symbol) })
++            }
++        })().map_err(|error| error.to_string())
++    });
++    match functions {
++        // SAFETY: the process-owned loader and function pointer outlive the Entry.
++        Ok(functions) => Ok(unsafe { ash::Entry::from_static_fn(functions.clone()) }),
++        Err(error) => bail!("load Turnip: {error}"),
++    }
++}
++
+ /// Instance extensions, in creation order. `VulkanDecodeDevice::instance_extensions` must
+ /// list exactly these — pyrowave replays them and a mismatch is a wrong answer, not an error.
+ const INSTANCE_EXTS: [&std::ffi::CStr; 3] = [ash::khr::surface::NAME, ash::khr::android_surface::NAME, ash::ext::swapchain_colorspace::NAME];
+@@ -70,10 +118,19 @@ struct FeatureProbe {
+     name: String,
+ }
+ 
+-/// Read the pyrowave feature set off `pdev`. Pure queries; no device is created.
++/// Read driver identity and apply diagnostic feature limits before device creation.
+ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> FeatureProbe {
+     // SAFETY: read-only query; the returned struct is plain data.
+-    let props = unsafe { instance.get_physical_device_properties(pdev) };
++    let mut driver = vk::PhysicalDeviceDriverProperties::default();
++    let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
++    // SAFETY: the property chain is live for this read-only physical-device query.
++    unsafe { instance.get_physical_device_properties2(pdev, &mut properties) };
++    let props = properties.properties;
++    log::info!("pyro: Vulkan driver id={:?} name={} info={}", driver.driver_id,
++        driver.driver_name_as_c_str().map(|s| s.to_string_lossy()).unwrap_or_default(),
++        driver.driver_info_as_c_str().map(|s| s.to_string_lossy()).unwrap_or_default());
++    let selected_driver_ok = crate::sys::sysprop(c"debug.punktfunk.vulkan_driver").as_deref()
++        != Some("turnip") || driver.driver_id == vk::DriverId::MESA_TURNIP;
+     let name = props
+         .device_name_as_c_str()
+         .map(|c| c.to_string_lossy().into_owned())
+@@ -87,7 +144,7 @@ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> Feature
+     unsafe { instance.get_physical_device_features2(pdev, &mut f2) };
+     // Copy before the chained structs are read: `f2` mutably borrows them.
+     let shader_int16 = f2.features.shader_int16;
+-    let ok = props.api_version >= vk::API_VERSION_1_3
++    let ok = selected_driver_ok && props.api_version >= vk::API_VERSION_1_3
+         && shader_int16 == vk::TRUE
+         && f12.storage_buffer8_bit_access == vk::TRUE
+         && f12.timeline_semaphore == vk::TRUE
+@@ -96,7 +153,8 @@ fn probe_features(instance: &ash::Instance, pdev: vk::PhysicalDevice) -> Feature
+         && f13.synchronization2 == vk::TRUE;
+     FeatureProbe {
+         ok,
+-        float16: f12.shader_float16 == vk::TRUE,
++        float16: f12.shader_float16 == vk::TRUE
++            && crate::sys::sysprop(c"debug.punktfunk.pyro_fp32").as_deref() != Some("1"),
+         api_version: props.api_version,
+         vendor_id: props.vendor_id,
+         name,
+@@ -131,8 +189,8 @@ fn create_instance(entry: &ash::Entry, with_surface: bool) -> Result<ash::Instan
+ /// bare instance — no surface, no logical device, no GPU work — so it is safe to call
+ /// before a session exists.
+ pub(crate) fn pyrowave_capable() -> bool {
+-    // SAFETY: the system Vulkan loader remains owned by Entry.
+-    let entry = match unsafe { ash::Entry::load() } {
++    // The diagnostic selector uses the same loader for capability and presentation.
++    let entry = match load_entry() {
+         Ok(e) => e,
+         Err(e) => {
+             log::info!("pyro: no Vulkan loader on this device ({e}) — PyroWave unavailable");
+@@ -296,13 +354,13 @@ impl PyroDevice {
+         })
+     }
+ 
+-    /// Load the loader, create the instance, and make a surface on `window`.
++    /// Select the diagnostic Vulkan driver and create its instance and window surface.
+     ///
+     /// Separate from [`PyroDevice::new`] because the surface must exist before a physical
+     /// device can be chosen (presentation support is a per-family property of the surface).
+     pub(super) fn open_surface(window: &ndk::native_window::NativeWindow) -> Result<WindowSurface> {
+-        // SAFETY: dlopens libvulkan.so; `Entry` owns the handle for the session.
+-        let entry = unsafe { ash::Entry::load() }.map_err(|e| anyhow!("no Vulkan loader: {e}"))?;
++        // Select the loader before creating any Vulkan instance or surface.
++        let entry = load_entry()?;
+         let instance = create_instance(&entry, true)?;
+         let android = ash::khr::android_surface::Instance::new(&entry, &instance);
+         let ci = vk::AndroidSurfaceCreateInfoKHR::default().window(window.ptr().as_ptr().cast());
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index f67865265..943f2f3e1 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -78,8 +78,8 @@ mod imp {
+                 _ => None,
+             },
+         );
+-        // `adb shell setprop debug.punktfunk.pyro_stats 1` logs the codec's GPU step timings.
+-        pf_client_core::video_pyrowave::set_gpu_stats(
++        // `debug.punktfunk.pyro_stats=1` enables the shared decoder's GPU step timings.
++        pf_client_video::video_pyrowave::set_gpu_stats(
+             crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1"),
+         );
+         PyroWaveDecoder::new(
+@@ -132,7 +132,9 @@ mod imp {
+         let dev = PyroDevice::new(PyroDevice::open_surface(window)?)?;
+         stats.set_decoder(&decoder_label(&dev.vkd.device_name), false);
+         let smooth = opts.present_priority == 1;
+-        let want_hdr = client.color.transfer == 16 && client.bit_depth >= 10;
++        // The diagnostic surface override leaves the stream and decode depth unchanged.
++        let want_hdr = client.color.transfer == 16 && client.bit_depth >= 10
++            && crate::sys::sysprop(c"debug.punktfunk.pyro_sdr_surface").as_deref() != Some("1");
+         let mut present = Present::new(&dev, smooth, want_hdr)?;
+ 
+         let mut mode = client.mode();
+diff --git a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+index 45cc9bc9c..4129574dc 100644
+--- a/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
++++ b/crates/codec/pyrowave-sys/vendor/pyrowave/pyrowave_decoder.cpp
+@@ -7,6 +7,9 @@
+ #include "math.hpp"
+ #include "pyrowave_common.hpp"
+ #include <algorithm>
++#ifdef __ANDROID__
++#include <sys/system_properties.h>
++#endif
+ 
+ namespace PyroWave
+ {
+@@ -298,7 +301,15 @@ bool Decoder::Impl::dequant(CommandBuffer &cmd)
+ 	cmd.set_specialization_constant_mask(0);
+ 	cmd.enable_subgroup_size_control(true);
+ 
+-	if (device->supports_subgroup_size_log2(true, 4, 7))
++	// Plane replay on Adreno 829 matches Qualcomm only with 64-lane dequant
++	// subgroups. Keep this workaround limited to the tested Turnip device.
++	if (device->get_device_features().driver_id == VK_DRIVER_ID_MESA_TURNIP &&
++	    device->get_gpu_properties().deviceID == 0x44030a20 &&
++	    device->supports_subgroup_size_log2(true, 6, 6))
++	{
++		cmd.set_subgroup_size_log2(true, 6, 6);
++	}
++	else if (device->supports_subgroup_size_log2(true, 4, 7))
+ 	{
+ 		cmd.set_subgroup_size_log2(true, 4, 7);
+ 	}
+@@ -942,6 +953,16 @@ bool Decoder::device_prefers_fragment_path(Vulkan::Device &device)
+ 
+ void Decoder::Impl::check_linear_texture_support()
+ {
++#ifdef __ANDROID__
++	// The diagnostic switch keeps the existing texel-buffer fallback active.
++	char no_linear[PROP_VALUE_MAX] = {};
++	__system_property_get("debug.punktfunk.pyro_no_linear", no_linear);
++	if (no_linear[0] == '1' && no_linear[1] == '\0')
++	{
++		LOGI("PyroWave: linear texture aliases disabled for diagnostic test.\n");
++		return;
++	}
++#endif
+ 	if (!use_readonly_texel_buffer)
+ 		return;
+ 

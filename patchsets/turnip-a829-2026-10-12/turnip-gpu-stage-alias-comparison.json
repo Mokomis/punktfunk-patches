@@ -1,0 +1,320 @@
+{
+  "gpu": {
+    "on": {
+      "pid": "10202",
+      "windows": {
+        "dequant_ms": 12,
+        "idwt_ms": 12,
+        "present_draw_ms": 12
+      },
+      "means": {
+        "dequant_ms": 1.1985000000000001,
+        "idwt_ms": 2.347,
+        "present_draw_ms": 1.3078333333333334
+      },
+      "ranges": {
+        "dequant_ms": [
+          1.06,
+          1.37
+        ],
+        "idwt_ms": [
+          2.165,
+          2.505
+        ],
+        "present_draw_ms": [
+          1.227,
+          1.389
+        ]
+      },
+      "values": {
+        "dequant_ms": [
+          1.2,
+          1.301,
+          1.205,
+          1.25,
+          1.121,
+          1.06,
+          1.254,
+          1.201,
+          1.082,
+          1.37,
+          1.211,
+          1.127
+        ],
+        "idwt_ms": [
+          2.403,
+          2.243,
+          2.326,
+          2.308,
+          2.505,
+          2.314,
+          2.165,
+          2.489,
+          2.29,
+          2.316,
+          2.431,
+          2.374
+        ],
+        "present_draw_ms": [
+          1.351,
+          1.25,
+          1.34,
+          1.318,
+          1.302,
+          1.389,
+          1.352,
+          1.227,
+          1.316,
+          1.229,
+          1.304,
+          1.316
+        ]
+      }
+    },
+    "off": {
+      "pid": "10970",
+      "windows": {
+        "dequant_ms": 13,
+        "idwt_ms": 13,
+        "present_draw_ms": 13
+      },
+      "means": {
+        "dequant_ms": 1.2421538461538462,
+        "idwt_ms": 2.339769230769231,
+        "present_draw_ms": 1.3166153846153847
+      },
+      "ranges": {
+        "dequant_ms": [
+          1.141,
+          1.387
+        ],
+        "idwt_ms": [
+          2.152,
+          2.458
+        ],
+        "present_draw_ms": [
+          1.235,
+          1.367
+        ]
+      },
+      "values": {
+        "dequant_ms": [
+          1.173,
+          1.193,
+          1.387,
+          1.186,
+          1.286,
+          1.32,
+          1.234,
+          1.309,
+          1.211,
+          1.141,
+          1.282,
+          1.21,
+          1.216
+        ],
+        "idwt_ms": [
+          2.458,
+          2.358,
+          2.344,
+          2.401,
+          2.236,
+          2.431,
+          2.34,
+          2.306,
+          2.416,
+          2.152,
+          2.307,
+          2.446,
+          2.222
+        ],
+        "present_draw_ms": [
+          1.354,
+          1.35,
+          1.287,
+          1.331,
+          1.314,
+          1.305,
+          1.358,
+          1.29,
+          1.346,
+          1.367,
+          1.235,
+          1.267,
+          1.312
+        ]
+      }
+    },
+    "on-repeat": {
+      "pid": "11843",
+      "windows": {
+        "dequant_ms": 12,
+        "idwt_ms": 12,
+        "present_draw_ms": 13
+      },
+      "means": {
+        "dequant_ms": 1.1895,
+        "idwt_ms": 2.3295,
+        "present_draw_ms": 1.3042307692307693
+      },
+      "ranges": {
+        "dequant_ms": [
+          1.089,
+          1.304
+        ],
+        "idwt_ms": [
+          2.225,
+          2.477
+        ],
+        "present_draw_ms": [
+          1.194,
+          1.391
+        ]
+      },
+      "values": {
+        "dequant_ms": [
+          1.219,
+          1.117,
+          1.157,
+          1.272,
+          1.139,
+          1.291,
+          1.089,
+          1.224,
+          1.199,
+          1.102,
+          1.304,
+          1.161
+        ],
+        "idwt_ms": [
+          2.347,
+          2.42,
+          2.287,
+          2.396,
+          2.307,
+          2.306,
+          2.477,
+          2.231,
+          2.42,
+          2.225,
+          2.308,
+          2.23
+        ],
+        "present_draw_ms": [
+          1.322,
+          1.258,
+          1.316,
+          1.29,
+          1.242,
+          1.382,
+          1.261,
+          1.326,
+          1.318,
+          1.308,
+          1.347,
+          1.194,
+          1.391
+        ]
+      }
+    }
+  },
+  "live": {
+    "on-first": {
+      "all_samples": [
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.1,
+          "fps": 135
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.0,
+          "fps": 137
+        },
+        {
+          "target_mbps": 788,
+          "decode_ms": 6.2,
+          "fps": 136
+        },
+        {
+          "target_mbps": 1032,
+          "decode_ms": 5.7,
+          "fps": 138
+        },
+        {
+          "target_mbps": 1032,
+          "decode_ms": 5.7,
+          "fps": 137
+        }
+      ],
+      "included": 2,
+      "mean_decode_ms_at_1125": 6.05,
+      "mean_fps_at_1125": 136
+    },
+    "off": {
+      "all_samples": [
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.0,
+          "fps": 138
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.8,
+          "fps": 138
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.1,
+          "fps": 138
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.0,
+          "fps": 136
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.9,
+          "fps": 139
+        }
+      ],
+      "included": 5,
+      "mean_decode_ms_at_1125": 5.96,
+      "mean_fps_at_1125": 137.8
+    },
+    "on-repeat": {
+      "all_samples": [
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.6,
+          "fps": 135
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.1,
+          "fps": 139
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.9,
+          "fps": 136
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 6.0,
+          "fps": 135
+        },
+        {
+          "target_mbps": 1125,
+          "decode_ms": 5.4,
+          "fps": 138
+        }
+      ],
+      "included": 5,
+      "mean_decode_ms_at_1125": 5.6,
+      "mean_fps_at_1125": 136.6
+    }
+  },
+  "final": "Turnip, subgroup64, default compute, aliases allowed when supported, profiling disabled"
+}

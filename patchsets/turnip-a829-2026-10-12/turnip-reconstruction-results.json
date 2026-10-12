@@ -1,0 +1,167 @@
+{
+  "compiler-base": {
+    "runs_ms": [
+      4.885,
+      4.899,
+      4.918
+    ],
+    "mean_ms": 4.900666666666667
+  },
+  "packed-apron8": {
+    "runs_ms": [
+      4.813,
+      4.813,
+      4.798
+    ],
+    "mean_ms": 4.808
+  },
+  "apron8": {
+    "runs_ms": [
+      4.86,
+      4.862,
+      4.864
+    ],
+    "mean_ms": 4.862
+  },
+  "packed": {
+    "runs_ms": [
+      4.917,
+      4.92,
+      4.919
+    ],
+    "mean_ms": 4.918666666666667
+  },
+  "sg64": {
+    "runs_ms": [
+      4.84,
+      4.864,
+      4.884
+    ],
+    "mean_ms": 4.862666666666667
+  },
+  "fp16": {
+    "runs_ms": [
+      4.865,
+      4.833,
+      4.848
+    ],
+    "mean_ms": 4.8486666666666665
+  },
+  "subgroup-barriers": {
+    "runs_ms": [
+      4.923,
+      4.924,
+      4.926
+    ],
+    "mean_ms": 4.924333333333333
+  },
+  "tiles2": {
+    "runs_ms": [
+      4.903,
+      4.902,
+      4.874
+    ],
+    "mean_ms": 4.893
+  },
+  "improvement_percent": 1.8908991973881184,
+  "quality": {
+    "frames": 115,
+    "planes": 345,
+    "byte_identical_planes": 280,
+    "max_10bit_code_difference": 1,
+    "min_finite_psnr_db": 106.93,
+    "golden_fixture_planes_identical": 9
+  },
+  "live-baseline-samples": {
+    "samples": [
+      {
+        "fps": 136,
+        "decode_ms": 5.8
+      },
+      {
+        "fps": 137,
+        "decode_ms": 5.8
+      },
+      {
+        "fps": 139,
+        "decode_ms": 5.6
+      },
+      {
+        "fps": 137,
+        "decode_ms": 5.7
+      },
+      {
+        "fps": 140,
+        "decode_ms": 4.5
+      }
+    ],
+    "mean_fps": 137.8,
+    "mean_decode_ms": 5.4799999999999995
+  },
+  "live-optimized-samples": {
+    "samples": [
+      {
+        "fps": 133,
+        "decode_ms": 6.0
+      },
+      {
+        "fps": 138,
+        "decode_ms": 5.9
+      },
+      {
+        "fps": 134,
+        "decode_ms": 6.1
+      }
+    ],
+    "mean_fps": 135,
+    "mean_decode_ms": 6.0
+  },
+  "live-control2-samples": {
+    "samples": [
+      {
+        "fps": 137,
+        "decode_ms": 5.8
+      },
+      {
+        "fps": 135,
+        "decode_ms": 5.9
+      },
+      {
+        "fps": 134,
+        "decode_ms": 6.1
+      },
+      {
+        "fps": 135,
+        "decode_ms": 5.3
+      },
+      {
+        "fps": 138,
+        "decode_ms": 5.7
+      }
+    ],
+    "mean_fps": 135.8,
+    "mean_decode_ms": 5.76
+  },
+  "resumed_live_test": {
+    "valid_for_performance": false,
+    "reason": "long receive gaps followed by zero video packet ingress",
+    "optimized_shader_activation_confirmed": true
+  },
+  "game_restarted_followup": {
+    "optimized_shader_confirmed": true,
+    "video_kbps": [
+      1080144,
+      1080567
+    ],
+    "max_receive_gap_ms": [
+      16,
+      13
+    ],
+    "reported_frames_dropped": [
+      0,
+      0
+    ],
+    "screenshot_visually_clean": true,
+    "fps_gain_established": false
+  }
+}

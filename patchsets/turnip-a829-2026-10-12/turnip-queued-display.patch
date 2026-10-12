@@ -1,0 +1,300 @@
+diff --git a/crates/client/pf-client-video/src/video_pyrowave.rs b/crates/client/pf-client-video/src/video_pyrowave.rs
+--- a/crates/client/pf-client-video/src/video_pyrowave.rs
++++ b/crates/client/pf-client-video/src/video_pyrowave.rs
+@@ -1,27 +1,15 @@
+-//! PyroWave client decode on the presenter's VkDevice: decode + CSC + present on one
+-//! device, no interop (design/pyrowave-codec-plan.md). One AU is one self-delimiting
+-//! packet: `push_packet` → ready → `decode_gpu_buffer` into our command buffer,
+-//! submitted under [`QueueLock`], fence-waited.
++//! PyroWave decode shares the presenter's Vulkan device and queue. Decode writes three
++//! Y′CbCr planes; the presenter samples them after a GPU memory barrier.
+ //!
+-//! Output is three planes the decode writes (storage images on the compute path, colour
+-//! attachments on the fragment path) and the presenter samples (Y full-res; Cb/Cr half-res, or full-res on 4:4:4;
+-//! R8, or R16 UNORM at 10-bit). Encoder RG packing is invalid here (`pyrowave.h`).
+-//! Colour comes from negotiated `ColorInfo`; the bitstream has no VUI. A plane-set
+-//! ring keeps decode from overwriting a set the presenter still samples.
++//! The default decode call waits for GPU completion. The same-queue variant returns
++//! pending planes so a caller can submit display work before waiting for completion.
++//! Every following decode or resize waits before reusing decoder buffers.
+ //!
+-//! pyrowave 0.4.0 needs instance/device create-infos alive for the shared device.
+-//! The presenter does not pin its originals, so [`Hold`] reconstructs content-equivalent
+-//! ones from [`VulkanDecodeDevice`]. Pointer identity is not required.
++//! Plane rings retain images across frame handovers and mid-stream resizing. Retired
++//! rings wait for enough handovers and a queue-idle boundary before release.
+ //!
+-//! The decoder object is fixed-size. [`au_dims`] sniffs each frame's sequence header
+-//! and [`PyroWaveDecoder::reconfigure`] rebuilds decoder + plane ring in place; device,
+-//! command pool and pinned create-infos survive. A frame holds its ring ([`PlaneRing`]);
+-//! a superseded ring is also retired for consumers that sample without holding the frame
+-//! (see [`RETIRE_HANDOVERS`]).
+-//!
+-//! Decoder invariants every method's SAFETY leans on: `device` is the presenter's live
+-//! device, which outlives the decoder; `pw_dev`, `pw_dec`, the rings, `cmd` and `fence`
+-//! are this decoder's own; the shared queue is touched only under `queue_lock`.
++//! The device outlives the decoder. Pinned create infos support PyroWave's shared-device
++//! wrapper; all queue access holds [`QueueLock`].
+ 
+ use crate::video_color::ColorDesc;
+ use crate::video_vk::{QueueLock, VulkanDecodeDevice};
+@@ -254,7 +242,7 @@
+     unsafe { (*(ud as *const QueueLock)).unlock() }
+ }
+ 
+-/// Fence-waited decode output on the presenter's device, GENERAL layout.
++/// Decode output on the shared device in GENERAL layout; queued output can be pending.
+ pub struct PyroWavePlanarFrame {
+     /// Keeps the planes alive past a resize or the decoder's end. A consumer that may
+     /// sample the frame again holds the frame.
+@@ -482,6 +470,7 @@
+     cmd_pool: vk::CommandPool,
+     cmd: vk::CommandBuffer,
+     fence: vk::Fence,
++    pending_decode: Option<Instant>,
+     mem_props: vk::PhysicalDeviceMemoryProperties,
+     width: u32,
+     height: u32,
+@@ -513,8 +502,10 @@
+     pub parse_us: u32,
+     /// Command recording, payload upload included (CPU).
+     pub record_us: u32,
+-    /// Submit to fence: the GPU's own time plus whatever queued ahead of it.
++    /// Submit until CPU-observed completion, including queued work and observation delay.
+     pub gpu_us: u32,
++    /// CPU time blocked on the decode fence.
++    pub fence_wait_us: u32,
+ }
+ 
+ // SAFETY: used only from the single decode thread; the shared-queue accesses go through
+@@ -544,8 +535,8 @@
+ 
+     /// # Safety
+     ///
+-    /// `vkd`'s handles are the presenter's live instance and device, and they outlive
+-    /// the decoder.
++    /// The presenter keeps `vkd`'s instance, device and shared queue alive until this
++    /// decoder and all frames using its plane rings have been released.
+     unsafe fn new_inner(
+         vkd: &VulkanDecodeDevice,
+         width: u32,
+@@ -733,6 +724,7 @@
+             cmd_pool,
+             cmd,
+             fence,
++            pending_decode: None,
+             mem_props,
+             width,
+             height,
+@@ -747,11 +739,10 @@
+         })
+     }
+ 
+-    /// Rebuild decoder + plane ring at new dimensions. Device, command pool, fence and
+-    /// pinned create-infos are dimension-independent and survive. Build-new-before-drop-old:
+-    /// failure leaves the current decoder untouched. The old ring is retired, not
+-    /// destroyed (see [`RETIRE_HANDOVERS`]).
++    /// Completes pending decode before rebuilding the decoder and plane ring. New resources
++    /// are built before replacement; old planes remain retired across presenter handovers.
+     fn reconfigure(&mut self, width: u32, height: u32) -> Result<()> {
++        self.finish_pending_decode()?;
+         if !self.chroma444 && (width % 2 != 0 || height % 2 != 0) {
+             bail!("pyrowave 4:2:0 needs even dimensions (resize to {width}x{height})");
+         }
+@@ -926,15 +917,54 @@
+         lines
+     }
+ 
+-    /// One AU in → one frame out. `aligned`: shard-window chunked (each `wire_window`
+-    /// holds whole self-delimiting packets, zero-padded). `complete`: every shard arrived;
+-    /// a partial still decodes — missing blocks are localized blur for this frame only.
++    /// Decodes an access unit and waits for the output planes to finish.
+     pub fn decode_frame(
+         &mut self,
+         au: &[u8],
+         aligned: bool,
+         complete: bool,
+     ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.decode_frame_inner(au, aligned, complete, false)
++    }
++
++    /// Submits decode without blocking display command recording on its fence.
++    ///
++    /// # Safety
++    /// Any sampling of returned planes uses this decoder's queue after this call and
++    /// before the next decode. The decode's memory barrier protects that sampling.
++    /// Host reads first call [`Self::finish_pending_decode`].
++    pub unsafe fn decode_frame_queued(
++        &mut self,
++        au: &[u8],
++        aligned: bool,
++        complete: bool,
++    ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.decode_frame_inner(au, aligned, complete, true)
++    }
++
++    /// Completes a submitted decode before buffer reuse or CPU latency publication.
++    pub fn finish_pending_decode(&mut self) -> Result<()> {
++        let Some(submitted) = self.pending_decode else { return Ok(()); };
++        let wait_started = Instant::now();
++        // SAFETY: the fence belongs to the pending decode submit and is not reset until
++        // completion. A timeout leaves it pending for teardown or a later wait.
++        unsafe { self.device.wait_for_fences(&[self.fence], true, 5_000_000_000) }
++            .context("pyrowave decode fence")?;
++        self.split.fence_wait_us = wait_started.elapsed().as_micros() as u32;
++        self.split.gpu_us = submitted.elapsed().as_micros() as u32;
++        self.pending_decode = None;
++        Ok(())
++    }
++
++    fn decode_frame_inner(
++        &mut self,
++        au: &[u8],
++        aligned: bool,
++        complete: bool,
++        queued: bool,
++    ) -> Result<Option<PyroWavePlanarFrame>> {
++        self.finish_pending_decode()?;
++        self.split = DecodeSplit::default();
+         // The AU's sequence header announces a host mode switch; rebuild first — a size
+         // mismatch hard-errors upstream. A lost first shard sniffs `None` and decodes at
+         // the current size; the next complete frame carries the header again.
+@@ -977,7 +1007,7 @@
+ 
+         let slot = self.next;
+         self.next = (self.next + 1) % RING;
+-        if let Err(e) = self.record_and_wait(slot) {
++        if let Err(e) = self.record_and_submit(slot, queued) {
+             // The buffer may still be recording or on the GPU, and the pump keeps this decoder:
+             // idle the queue, then reset the buffer so the next frame can begin on it.
+             let _guard = self.queue_lock.guard();
+@@ -985,6 +1015,7 @@
+             // pool) is not pending, so it can be reset.
+             unsafe {
+                 let _ = self.device.queue_wait_idle(self.queue);
++                self.pending_decode = None;
+                 let _ = self
+                     .device
+                     .reset_command_buffer(self.cmd, vk::CommandBufferResetFlags::empty());
+@@ -1016,9 +1047,9 @@
+         }))
+     }
+ 
+-    /// Record `slot`'s decode, submit it, and wait for its fence. On `Err` the command buffer
+-    /// may be recording or pending; the caller idles the queue before reusing it.
+-    fn record_and_wait(&mut self, slot: usize) -> Result<()> {
++    /// Records and submits one decode. A queued caller finishes after submitting display;
++    /// the default caller finishes here. Errors idle the queue before command-buffer reuse.
++    fn record_and_submit(&mut self, slot: usize, queued: bool) -> Result<()> {
+         let record_started = Instant::now();
+         let dev = self.device.clone();
+         // SAFETY: `cmd` is this decoder's and idle: the last submit's fence was waited, or
+@@ -1194,19 +1225,18 @@
+                 )
+             }?;
+         }
+-        // SAFETY: `fence` is this decoder's, named by the submit above.
+-        unsafe { dev.wait_for_fences(&[self.fence], true, 5_000_000_000) }
+-            .context("pyrowave decode fence")?;
+-        self.split.gpu_us = gpu_started.elapsed().as_micros() as u32;
++        self.pending_decode = Some(gpu_started);
++        if !queued {
++            self.finish_pending_decode()?;
++        }
+         Ok(())
+     }
+ }
+ 
+ impl Drop for PyroWaveDecoder {
+     fn drop(&mut self) {
+-        // SAFETY: owned handles on the presenter's device. Decode is fence-synchronous so
+-        // none of our work is in flight; the presenter may still sample the last slot —
+-        // idle the shared queue under the lock before destroying plane images.
++        // SAFETY: all handles belong to this decoder. Queue idle covers pending decode
++        // and presenter sampling before buffers, fences and plane images are destroyed.
+         unsafe {
+             {
+                 let _guard = self.queue_lock.guard();
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -165,6 +165,24 @@
+         let started = Instant::now();
+         let mut received: u64 = 0;
+         let mut warned_silent = false;
++        let mut driver = ash::vk::PhysicalDeviceDriverProperties::default();
++        let mut properties = ash::vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
++        // SAFETY: the physical device belongs to the live instance; both output structs
++        // remain alive for the query. Their contents select only the CPU handoff path.
++        unsafe { dev.base.instance.get_physical_device_properties2(dev.pdev, &mut properties) };
++        let device_id = properties.properties.device_id;
++        let queued_default = driver.driver_id == ash::vk::DriverId::MESA_TURNIP
++            && device_id == 0x44030a20;
++        let queued_present = match crate::sys::sysprop(c"debug.punktfunk.pyro_queue_present").as_deref() {
++            Some("0") => false,
++            Some("1") => true,
++            _ => queued_default,
++        };
++        let handoff_stats = crate::sys::sysprop(c"debug.punktfunk.pyro_handoff_stats").as_deref() == Some("1");
++        log::info!("pyro: decode handoff={}", if queued_present { "queued-present" } else { "fence-first" });
++        let mut handoff_sum = [0u64; 7];
++        let mut handoff_window = Instant::now();
++        let mut handoff_frames = 0u32;
+ 
+         while !shutdown.load(Ordering::Relaxed) {
+             // Metadata is best-effort and latest-wins. Drain without delaying video; the host
+@@ -217,7 +235,7 @@
+ 
+             // Receipt stamp: core's reassembly-completion time, not the pull instant — a
+             // pull stamp folds this loop's own poll wait into "network".
+-            let want_stamps = stats.enabled() || measure_decode;
++            let want_stamps = stats.enabled() || measure_decode || handoff_stats;
+             let received_ns = if !want_stamps {
+                 0
+             } else if frame.received_ns > 0 {
+@@ -227,7 +245,15 @@
+             };
+ 
+             let aligned = frame.flags & punktfunk_core::packet::USER_FLAG_CHUNK_ALIGNED != 0;
+-            let decoded = match decoder.decode_frame(&frame.data, aligned, frame.complete) {
++            let decode_started = Instant::now();
++            let result = if queued_present {
++                // SAFETY: Present submits sampling on this decoder's queue on this thread,
++                // before another decode. Completion precedes reuse and latency publication.
++                unsafe { decoder.decode_frame_queued(&frame.data, aligned, frame.complete) }
++            } else {
++                decoder.decode_frame(&frame.data, aligned, frame.complete)
++            };
++            let decoded = match result {
+                 Ok(d) => d,
+                 Err(e) => {
+                     // Not recoverable by asking for anything: an intra-only frame that the
+@@ -246,7 +272,28 @@
+             let crop = crate::session::unpack_src_crop(
+                 opts.src_crop.load(std::sync::atomic::Ordering::Relaxed),
+             );
++            let present_started = Instant::now();
+             let shown = present.show(picture.views, crop, picture.color, depth, msb_packed)?;
++            let present_us = present_started.elapsed().as_micros() as u64;
++            decoder.finish_pending_decode()?;
++            if handoff_stats && shown {
++                let split = decoder.last_split();
++                let values = [split.parse_us as u64, split.record_us as u64,
++                    split.fence_wait_us as u64, split.gpu_us as u64, present_us,
++                    decode_started.elapsed().as_micros() as u64,
++                    crate::stats::sane_us(now_realtime_ns() - received_ns).unwrap_or(0)];
++                for (sum, value) in handoff_sum.iter_mut().zip(values) { *sum += value; }
++                handoff_frames += 1;
++                if handoff_frames == 600 {
++                    let avg = handoff_sum.map(|sum| sum as f64 / 600000.0);
++                    log::info!("pyro: handoff CPU avg_ms parse={:.3} record={:.3} fence_wait={:.3} observed_completion={:.3} present_submit={:.3} total={:.3} receipt_to_complete={:.3} queued={} fps={:.1} frames=600",
++                        avg[0], avg[1], avg[2], avg[3], avg[4], avg[5], avg[6], queued_present,
++                        600.0 / handoff_window.elapsed().as_secs_f64());
++                    handoff_sum = [0; 7];
++                    handoff_window = Instant::now();
++                    handoff_frames = 0;
++                }
++            }
+             if !shown {
+                 continue; // swapchain was out of date; it has been rebuilt
+             }

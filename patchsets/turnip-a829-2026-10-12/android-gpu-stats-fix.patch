@@ -1,0 +1,15 @@
+diff --git a/clients/android/native/src/pyro/mod.rs b/clients/android/native/src/pyro/mod.rs
+index f67865265..d5fe07f3d 100644
+--- a/clients/android/native/src/pyro/mod.rs
++++ b/clients/android/native/src/pyro/mod.rs
+@@ -78,8 +78,8 @@ mod imp {
+                 _ => None,
+             },
+         );
+-        // `adb shell setprop debug.punktfunk.pyro_stats 1` logs the codec's GPU step timings.
+-        pf_client_core::video_pyrowave::set_gpu_stats(
++        // `debug.punktfunk.pyro_stats=1` enables the shared decoder's GPU step timings.
++        pf_client_video::video_pyrowave::set_gpu_stats(
+             crate::sys::sysprop(c"debug.punktfunk.pyro_stats").as_deref() == Some("1"),
+         );
+         PyroWaveDecoder::new(

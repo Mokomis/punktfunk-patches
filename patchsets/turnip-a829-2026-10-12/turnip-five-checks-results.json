@@ -1,0 +1,155 @@
+{
+  "cpu": {
+    "cpu-base": {
+      "runs_ms": [
+        0.123184,
+        0.12294,
+        0.12309
+      ],
+      "mean_ms": 0.12307133333333334
+    },
+    "cpu-reuse": {
+      "runs_ms": [
+        0.122608,
+        0.122895,
+        0.122801
+      ],
+      "mean_ms": 0.122768
+    }
+  },
+  "dequant": {
+    "base": {
+      "runs_ms": [
+        2.469,
+        2.465,
+        2.442
+      ],
+      "mean_ms": 2.458666666666667
+    },
+    "two-subgroups": {
+      "runs_ms": [
+        2.482,
+        2.418,
+        2.456
+      ],
+      "mean_ms": 2.452
+    }
+  },
+  "sustained": {
+    "duration_observed_s": 580.7725169999758,
+    "thermal_groups": {
+      "1": {
+        "samples": 2,
+        "mean_latest_fps": 136.3,
+        "gpu_samples_hz": [
+          1025000000,
+          975000000
+        ]
+      },
+      "2": {
+        "samples": 9,
+        "mean_latest_fps": 136.45555555555555,
+        "gpu_samples_hz": [
+          891000000,
+          826000000,
+          925000000,
+          1025000000,
+          975000000,
+          891000000,
+          795000000,
+          826000000,
+          891000000
+        ]
+      },
+      "3": {
+        "samples": 8,
+        "mean_latest_fps": 133.4,
+        "gpu_samples_hz": [
+          925000000,
+          975000000,
+          1025000000,
+          975000000,
+          1075000000,
+          732000000,
+          646000000,
+          646000000
+        ]
+      }
+    },
+    "first_battery_level": 79,
+    "last_battery_level": 75,
+    "first_battery_temp_c": 36.3,
+    "last_battery_temp_c": 41.1,
+    "pacing": {
+      "observed_unique_frames": 80967,
+      "observed_adjacent_intervals": 80963,
+      "refresh_period_ms": 6.944444,
+      "median_present_interval_ms": 6.94802,
+      "p95_present_interval_ms": 13.893073,
+      "one_refresh_percent": 93.78975581438435,
+      "two_refresh_percent": 5.916282746439732,
+      "longer_percent": 0.2939614391759199,
+      "longest_observed_ms": 250.170417
+    },
+    "memory": [
+      {
+        "elapsed_s": 0,
+        "pss_kb": 467127,
+        "rss_kb": 647248
+      },
+      {
+        "elapsed_s": 60,
+        "pss_kb": 473942,
+        "rss_kb": 654940
+      },
+      {
+        "elapsed_s": 120,
+        "pss_kb": 474218,
+        "rss_kb": 655380
+      },
+      {
+        "elapsed_s": 180,
+        "pss_kb": 473923,
+        "rss_kb": 655184
+      },
+      {
+        "elapsed_s": 241,
+        "pss_kb": 474187,
+        "rss_kb": 655580
+      },
+      {
+        "elapsed_s": 301,
+        "pss_kb": 474499,
+        "rss_kb": 656008
+      },
+      {
+        "elapsed_s": 361,
+        "pss_kb": 474475,
+        "rss_kb": 656016
+      },
+      {
+        "elapsed_s": 422,
+        "pss_kb": 474811,
+        "rss_kb": 656452
+      },
+      {
+        "elapsed_s": 482,
+        "pss_kb": 474823,
+        "rss_kb": 656520
+      },
+      {
+        "elapsed_s": 542,
+        "pss_kb": 474863,
+        "rss_kb": 656608
+      }
+    ],
+    "power_note": "current_now vendor units were not verified; no watt estimate"
+  },
+  "feedback_fix": {
+    "build": "passed",
+    "controller_tests_passed": 43,
+    "installed": true,
+    "runtime_report_marker": true,
+    "performance_gain_measured": false
+  }
+}

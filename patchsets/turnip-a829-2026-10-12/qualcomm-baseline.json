@@ -1,0 +1,69 @@
+[
+  {
+    "time": 1791764967.143382,
+    "texts": [
+      "players 1 \u00b7 2",
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 805.6 Mb/s \u00b7 target 889 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.2 ms p50 \u00b7 22.5 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.7 + decode 6.1",
+      "rtt 10.9 ms",
+      "audio buffer 83 ms \u00b7 a/v +90 ms",
+      "Link 18 Mbit/s, measured",
+      "wi-fi \u2193 3459 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791764973.307574,
+    "texts": [
+      "players 1 \u00b7 2",
+      "2414\u00d71680@144 \u00b7 137 fps \u00b7 904.0 Mb/s \u00b7 target 945 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.9 ms p50 \u00b7 22.1 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.1 + decode 6.7",
+      "rtt 11.4 ms",
+      "audio buffer 83 ms \u00b7 a/v +89 ms",
+      "skipped 1 (\u26a0 1 overflow)",
+      "Link 18 Mbit/s, measured",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791764979.496072,
+    "texts": [
+      "players 1 \u00b7 2",
+      "2414\u00d71680@144 \u00b7 138 fps \u00b7 961.2 Mb/s \u00b7 target 1004 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.3 ms p50 \u00b7 20.7 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.1 + decode 6.2",
+      "rtt 10.9 ms",
+      "audio buffer 83 ms \u00b7 a/v +89 ms",
+      "Link 18 Mbit/s, measured",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791764985.651785,
+    "texts": [
+      "players 1 \u00b7 2",
+      "2414\u00d71680@144 \u00b7 138 fps \u00b7 1080.3 Mb/s \u00b7 target 1125 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.7 ms p50 \u00b7 22.1 p95 \u00b7 capture\u2192decoded",
+      "= host+network 12.1 + decode 6.3",
+      "rtt 10.9 ms",
+      "audio buffer 82 ms \u00b7 a/v +89 ms",
+      "Link 18 Mbit/s, measured",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  },
+  {
+    "time": 1791764991.823902,
+    "texts": [
+      "players 1 \u00b7 2",
+      "2414\u00d71680@144 \u00b7 140 fps \u00b7 767.2 Mb/s \u00b7 target 788 Mb/s (auto) \u00b7 PyroWave 10-bit \u00b7 PyroWave / Adreno (TM) 829 \u00b7 HDR",
+      "end-to-end 18.9 ms p50 \u00b7 21.8 p95 \u00b7 capture\u2192decoded",
+      "= host+network 11.7 + decode 6.9",
+      "rtt 11.1 ms",
+      "audio buffer 111 ms \u00b7 a/v +121 ms",
+      "bitrate lowered: packet loss \u00b7 49 loss repairs/min",
+      "Link 18 Mbit/s, measured",
+      "wi-fi \u2193 3843 Mb/s \u00b7 320 MHz"
+    ]
+  }
+]
