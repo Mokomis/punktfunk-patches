@@ -1,0 +1,51 @@
+{
+  "mode": "2520x1680@144, landscape, 10-bit HDR",
+  "samples_per_codec": 2,
+  "pyrowave": {
+    "p50_ms": [
+      17.4,
+      17.6
+    ],
+    "p95_ms": [
+      22.5,
+      23.2
+    ],
+    "fps": [
+      135,
+      133
+    ],
+    "wire_mbps": [
+      1054.5,
+      1038.6
+    ],
+    "mean_p50_ms": 17.5,
+    "mean_p95_ms": 22.85,
+    "mean_fps": 134.0,
+    "mean_wire_mbps": 1046.55
+  },
+  "hevc_800_requested_p4": {
+    "p50_ms": [
+      16.9,
+      16.6
+    ],
+    "p95_ms": [
+      21.5,
+      21.5
+    ],
+    "fps": [
+      138,
+      137
+    ],
+    "wire_mbps": [
+      303.0,
+      307.6
+    ],
+    "mean_p50_ms": 16.75,
+    "mean_p95_ms": 21.5,
+    "mean_fps": 137.5,
+    "mean_wire_mbps": 305.3
+  },
+  "assessment": "HEVC P4 practically matches visible static detail; no convincing PyroWave detail advantage in the inspected scene. Lighting changed; no host lossless reference or controlled motion replay.",
+  "excluded": "Earlier HEVC 30 FPS captures show visible character artifacts while game lacked focus. Clicking game restored 136+ FPS and clean character rendering. Those captures are not normal-performance evidence.",
+  "final_state": "Released APK, HEVC target 800, host P4 retained, full-panel 2520x1680; user must retain game focus after reconnects."
+}
