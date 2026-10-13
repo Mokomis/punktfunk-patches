@@ -24,3 +24,7 @@ The Mesa driver is built by the pinned workflow, also included here. The native 
 ## Results
 
 Start with `turnip-final-validation-report.md`, then `turnip-five-checks-report.md`, then the reconstruction, queued-display and corruption reports. Release assets hold the driver ZIP, final APK, native libraries, checksums, and complete experiment evidence. The final sustained, cooling/recovery and packed-read checks are complete.
+
+## HEVC and AV1 comparison
+
+The [live No Man’s Sky codec comparison](codec-comparison/codec-comparison-report.md) tests latency and motion detail without scoring bandwidth. Final full-screen checks favored PyroWave over both codecs at 400 Mb/s. At 800 Mb/s, HEVC looked comparable with similar latency; AV1 looked comparable with higher latency. Evidence is attached to the same release.

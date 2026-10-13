@@ -1,0 +1,636 @@
+{
+  "primary_comparisons": {
+    "pyrowave": {
+      "runs": [
+        "pyrowave-initial",
+        "pyrowave-settled"
+      ],
+      "samples": 10,
+      "mean_p50_ms": 16.88,
+      "mean_p95_ms": 19.349999999999998,
+      "mean_fps": 137.4,
+      "mean_decode_ms": 4.57,
+      "mean_actual_mbps": 1075.32
+    },
+    "hevc_400": {
+      "runs": [
+        "hevc-400",
+        "hevc-400-repeat",
+        "hevc-400-final"
+      ],
+      "samples": 15,
+      "mean_p50_ms": 15.9,
+      "mean_p95_ms": 18.973333333333333,
+      "mean_fps": 137.0,
+      "mean_decode_ms": 6.626666666666667,
+      "mean_actual_mbps": 301.8066666666667
+    },
+    "hevc_800": {
+      "runs": [
+        "hevc-800"
+      ],
+      "samples": 5,
+      "mean_p50_ms": 17.44,
+      "mean_p95_ms": 21.599999999999998,
+      "mean_fps": 137.8,
+      "mean_decode_ms": 6.7,
+      "mean_actual_mbps": 386.9
+    },
+    "av1_400": {
+      "runs": [
+        "av1-400"
+      ],
+      "samples": 5,
+      "mean_p50_ms": 17.92,
+      "mean_p95_ms": 21.46,
+      "mean_fps": 137.8,
+      "mean_decode_ms": 8.280000000000001,
+      "mean_actual_mbps": 349.38
+    },
+    "av1_800": {
+      "runs": [
+        "av1-800-valid"
+      ],
+      "samples": 5,
+      "mean_p50_ms": 28.06,
+      "mean_p95_ms": 35.16,
+      "mean_fps": 136.6,
+      "mean_decode_ms": 16.68,
+      "mean_actual_mbps": 627.68
+    }
+  },
+  "all_runs": {
+    "av1-800-valid": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791850157.828289,
+          "p50_ms": 21.2,
+          "p95_ms": 24.7,
+          "fps": 135.0,
+          "decode_ms": 10.2,
+          "target_mbps": 800.0,
+          "actual_mbps": 582.9
+        },
+        {
+          "wall_time": 1791850163.987465,
+          "p50_ms": 23.0,
+          "p95_ms": 26.9,
+          "fps": 137.0,
+          "decode_ms": 10.8,
+          "target_mbps": 800.0,
+          "actual_mbps": 612.6
+        },
+        {
+          "wall_time": 1791850170.222377,
+          "p50_ms": 22.5,
+          "p95_ms": 25.2,
+          "fps": 138.0,
+          "decode_ms": 10.1,
+          "target_mbps": 800.0,
+          "actual_mbps": 614.4
+        },
+        {
+          "wall_time": 1791850176.3850849,
+          "p50_ms": 22.3,
+          "p95_ms": 27.0,
+          "fps": 136.0,
+          "decode_ms": 10.8,
+          "target_mbps": 800.0,
+          "actual_mbps": 612.2
+        },
+        {
+          "wall_time": 1791850182.550359,
+          "p50_ms": 51.3,
+          "p95_ms": 72.0,
+          "fps": 137.0,
+          "decode_ms": 41.5,
+          "target_mbps": 800.0,
+          "actual_mbps": 716.3
+        }
+      ],
+      "mean_p50_ms": 28.06,
+      "mean_p95_ms": 35.16,
+      "mean_fps": 136.6,
+      "mean_decode_ms": 16.68,
+      "mean_actual_mbps": 627.68
+    },
+    "pyrowave-settled": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791851160.943016,
+          "p50_ms": 17.2,
+          "p95_ms": 19.4,
+          "fps": 139.0,
+          "decode_ms": 5.0,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1086.2
+        },
+        {
+          "wall_time": 1791851167.102963,
+          "p50_ms": 17.0,
+          "p95_ms": 18.9,
+          "fps": 136.0,
+          "decode_ms": 5.1,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1062.4
+        },
+        {
+          "wall_time": 1791851173.312649,
+          "p50_ms": 17.0,
+          "p95_ms": 19.9,
+          "fps": 137.0,
+          "decode_ms": 4.4,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1070.1
+        },
+        {
+          "wall_time": 1791851179.468012,
+          "p50_ms": 17.3,
+          "p95_ms": 19.4,
+          "fps": 134.0,
+          "decode_ms": 5.1,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1052.1
+        },
+        {
+          "wall_time": 1791851185.6326551,
+          "p50_ms": 17.1,
+          "p95_ms": 19.5,
+          "fps": 137.0,
+          "decode_ms": 4.8,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1069.8
+        }
+      ],
+      "mean_p50_ms": 17.12,
+      "mean_p95_ms": 19.419999999999998,
+      "mean_fps": 136.6,
+      "mean_decode_ms": 4.88,
+      "mean_actual_mbps": 1068.12
+    },
+    "av1-400-repeat-valid": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791850872.6933298,
+          "p50_ms": 19.7,
+          "p95_ms": 23.5,
+          "fps": 139.0,
+          "decode_ms": 9.3,
+          "target_mbps": 400.0,
+          "actual_mbps": 346.5
+        },
+        {
+          "wall_time": 1791850878.950065,
+          "p50_ms": 19.6,
+          "p95_ms": 23.5,
+          "fps": 135.0,
+          "decode_ms": 9.3,
+          "target_mbps": 400.0,
+          "actual_mbps": 336.9
+        },
+        {
+          "wall_time": 1791850885.112394,
+          "p50_ms": 19.1,
+          "p95_ms": 23.0,
+          "fps": 138.0,
+          "decode_ms": 9.0,
+          "target_mbps": 400.0,
+          "actual_mbps": 336.5
+        },
+        {
+          "wall_time": 1791850891.28283,
+          "p50_ms": 19.1,
+          "p95_ms": 23.0,
+          "fps": 135.0,
+          "decode_ms": 8.8,
+          "target_mbps": 400.0,
+          "actual_mbps": 328.9
+        },
+        {
+          "wall_time": 1791850897.409746,
+          "p50_ms": 19.3,
+          "p95_ms": 23.0,
+          "fps": 135.0,
+          "decode_ms": 9.1,
+          "target_mbps": 400.0,
+          "actual_mbps": 329.7
+        }
+      ],
+      "mean_p50_ms": 19.36,
+      "mean_p95_ms": 23.2,
+      "mean_fps": 136.4,
+      "mean_decode_ms": 9.1,
+      "mean_actual_mbps": 335.7
+    },
+    "pyrowave-repeat": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791851090.651514,
+          "p50_ms": 17.1,
+          "p95_ms": 20.0,
+          "fps": 121.0,
+          "decode_ms": 4.5,
+          "target_mbps": 1125.0,
+          "actual_mbps": 946.2
+        },
+        {
+          "wall_time": 1791851096.824536,
+          "p50_ms": 16.9,
+          "p95_ms": 21.9,
+          "fps": 134.0,
+          "decode_ms": 5.0,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1047.9
+        },
+        {
+          "wall_time": 1791851102.993911,
+          "p50_ms": 17.2,
+          "p95_ms": 19.8,
+          "fps": 138.0,
+          "decode_ms": 5.0,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1077.9
+        },
+        {
+          "wall_time": 1791851109.142008,
+          "p50_ms": 17.8,
+          "p95_ms": 23.0,
+          "fps": 134.0,
+          "decode_ms": 5.1,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1046.9
+        },
+        {
+          "wall_time": 1791851115.316215,
+          "p50_ms": 16.8,
+          "p95_ms": 20.5,
+          "fps": 135.0,
+          "decode_ms": 5.1,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1061.1
+        }
+      ],
+      "mean_p50_ms": 17.16,
+      "mean_p95_ms": 21.04,
+      "mean_fps": 132.4,
+      "mean_decode_ms": 4.9399999999999995,
+      "mean_actual_mbps": 1036.0
+    },
+    "hevc-400-final": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791851256.682438,
+          "p50_ms": 15.8,
+          "p95_ms": 19.0,
+          "fps": 136.0,
+          "decode_ms": 6.5,
+          "target_mbps": 400.0,
+          "actual_mbps": 299.4
+        },
+        {
+          "wall_time": 1791851262.8503659,
+          "p50_ms": 15.2,
+          "p95_ms": 17.2,
+          "fps": 136.0,
+          "decode_ms": 6.7,
+          "target_mbps": 400.0,
+          "actual_mbps": 304.0
+        },
+        {
+          "wall_time": 1791851269.013471,
+          "p50_ms": 16.3,
+          "p95_ms": 20.0,
+          "fps": 138.0,
+          "decode_ms": 6.8,
+          "target_mbps": 400.0,
+          "actual_mbps": 317.9
+        },
+        {
+          "wall_time": 1791851275.153347,
+          "p50_ms": 16.4,
+          "p95_ms": 20.1,
+          "fps": 139.0,
+          "decode_ms": 6.6,
+          "target_mbps": 400.0,
+          "actual_mbps": 310.9
+        },
+        {
+          "wall_time": 1791851281.330007,
+          "p50_ms": 15.6,
+          "p95_ms": 19.0,
+          "fps": 136.0,
+          "decode_ms": 6.7,
+          "target_mbps": 400.0,
+          "actual_mbps": 304.3
+        }
+      ],
+      "mean_p50_ms": 15.86,
+      "mean_p95_ms": 19.06,
+      "mean_fps": 137.0,
+      "mean_decode_ms": 6.66,
+      "mean_actual_mbps": 307.3
+    },
+    "hevc-400": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791849852.24493,
+          "p50_ms": 15.7,
+          "p95_ms": 18.5,
+          "fps": 137.0,
+          "decode_ms": 6.2,
+          "target_mbps": 400.0,
+          "actual_mbps": 289.7
+        },
+        {
+          "wall_time": 1791849858.4025211,
+          "p50_ms": 15.5,
+          "p95_ms": 17.7,
+          "fps": 137.0,
+          "decode_ms": 6.5,
+          "target_mbps": 400.0,
+          "actual_mbps": 305.6
+        },
+        {
+          "wall_time": 1791849864.561078,
+          "p50_ms": 14.8,
+          "p95_ms": 18.1,
+          "fps": 138.0,
+          "decode_ms": 6.0,
+          "target_mbps": 400.0,
+          "actual_mbps": 294.1
+        },
+        {
+          "wall_time": 1791849870.707744,
+          "p50_ms": 15.3,
+          "p95_ms": 18.4,
+          "fps": 137.0,
+          "decode_ms": 6.2,
+          "target_mbps": 400.0,
+          "actual_mbps": 289.9
+        },
+        {
+          "wall_time": 1791849876.87078,
+          "p50_ms": 14.9,
+          "p95_ms": 18.2,
+          "fps": 138.0,
+          "decode_ms": 6.2,
+          "target_mbps": 400.0,
+          "actual_mbps": 298.5
+        }
+      ],
+      "mean_p50_ms": 15.24,
+      "mean_p95_ms": 18.18,
+      "mean_fps": 137.4,
+      "mean_decode_ms": 6.22,
+      "mean_actual_mbps": 295.56
+    },
+    "hevc-400-repeat": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791850437.893909,
+          "p50_ms": 16.8,
+          "p95_ms": 19.8,
+          "fps": 135.0,
+          "decode_ms": 7.1,
+          "target_mbps": 400.0,
+          "actual_mbps": 299.2
+        },
+        {
+          "wall_time": 1791850444.0406451,
+          "p50_ms": 16.2,
+          "p95_ms": 19.0,
+          "fps": 135.0,
+          "decode_ms": 7.1,
+          "target_mbps": 400.0,
+          "actual_mbps": 296.3
+        },
+        {
+          "wall_time": 1791850450.286695,
+          "p50_ms": 16.3,
+          "p95_ms": 19.1,
+          "fps": 137.0,
+          "decode_ms": 6.9,
+          "target_mbps": 400.0,
+          "actual_mbps": 304.5
+        },
+        {
+          "wall_time": 1791850456.438998,
+          "p50_ms": 16.9,
+          "p95_ms": 19.7,
+          "fps": 139.0,
+          "decode_ms": 6.9,
+          "target_mbps": 400.0,
+          "actual_mbps": 310.1
+        },
+        {
+          "wall_time": 1791850462.607604,
+          "p50_ms": 16.8,
+          "p95_ms": 20.8,
+          "fps": 137.0,
+          "decode_ms": 7.0,
+          "target_mbps": 400.0,
+          "actual_mbps": 302.7
+        }
+      ],
+      "mean_p50_ms": 16.6,
+      "mean_p95_ms": 19.68,
+      "mean_fps": 136.6,
+      "mean_decode_ms": 7.0,
+      "mean_actual_mbps": 302.56
+    },
+    "av1-400": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791849909.872405,
+          "p50_ms": 18.6,
+          "p95_ms": 21.7,
+          "fps": 137.0,
+          "decode_ms": 8.3,
+          "target_mbps": 400.0,
+          "actual_mbps": 345.8
+        },
+        {
+          "wall_time": 1791849916.011436,
+          "p50_ms": 18.2,
+          "p95_ms": 21.6,
+          "fps": 138.0,
+          "decode_ms": 8.4,
+          "target_mbps": 400.0,
+          "actual_mbps": 351.1
+        },
+        {
+          "wall_time": 1791849922.156605,
+          "p50_ms": 17.7,
+          "p95_ms": 21.5,
+          "fps": 137.0,
+          "decode_ms": 8.3,
+          "target_mbps": 400.0,
+          "actual_mbps": 347.6
+        },
+        {
+          "wall_time": 1791849928.323943,
+          "p50_ms": 17.1,
+          "p95_ms": 21.0,
+          "fps": 139.0,
+          "decode_ms": 8.1,
+          "target_mbps": 400.0,
+          "actual_mbps": 351.7
+        },
+        {
+          "wall_time": 1791849934.478803,
+          "p50_ms": 18.0,
+          "p95_ms": 21.5,
+          "fps": 138.0,
+          "decode_ms": 8.3,
+          "target_mbps": 400.0,
+          "actual_mbps": 350.7
+        }
+      ],
+      "mean_p50_ms": 17.92,
+      "mean_p95_ms": 21.46,
+      "mean_fps": 137.8,
+      "mean_decode_ms": 8.280000000000001,
+      "mean_actual_mbps": 349.38
+    },
+    "av1-400-repeat": {
+      "valid_samples": 0,
+      "samples": []
+    },
+    "hevc-800": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791850271.364148,
+          "p50_ms": 18.1,
+          "p95_ms": 21.9,
+          "fps": 138.0,
+          "decode_ms": 7.0,
+          "target_mbps": 800.0,
+          "actual_mbps": 424.6
+        },
+        {
+          "wall_time": 1791850277.50863,
+          "p50_ms": 17.1,
+          "p95_ms": 21.4,
+          "fps": 138.0,
+          "decode_ms": 6.8,
+          "target_mbps": 800.0,
+          "actual_mbps": 410.1
+        },
+        {
+          "wall_time": 1791850283.677307,
+          "p50_ms": 17.1,
+          "p95_ms": 21.7,
+          "fps": 138.0,
+          "decode_ms": 6.6,
+          "target_mbps": 800.0,
+          "actual_mbps": 364.9
+        },
+        {
+          "wall_time": 1791850289.810663,
+          "p50_ms": 17.8,
+          "p95_ms": 22.4,
+          "fps": 137.0,
+          "decode_ms": 6.8,
+          "target_mbps": 800.0,
+          "actual_mbps": 400.7
+        },
+        {
+          "wall_time": 1791850295.963705,
+          "p50_ms": 17.1,
+          "p95_ms": 20.6,
+          "fps": 138.0,
+          "decode_ms": 6.3,
+          "target_mbps": 800.0,
+          "actual_mbps": 334.2
+        }
+      ],
+      "mean_p50_ms": 17.44,
+      "mean_p95_ms": 21.599999999999998,
+      "mean_fps": 137.8,
+      "mean_decode_ms": 6.7,
+      "mean_actual_mbps": 386.9
+    },
+    "pyrowave-initial": {
+      "valid_samples": 5,
+      "samples": [
+        {
+          "wall_time": 1791849737.920724,
+          "p50_ms": 16.5,
+          "p95_ms": 18.7,
+          "fps": 137.0,
+          "decode_ms": 4.3,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1077.1
+        },
+        {
+          "wall_time": 1791849744.1250508,
+          "p50_ms": 16.3,
+          "p95_ms": 18.7,
+          "fps": 139.0,
+          "decode_ms": 4.0,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1087.0
+        },
+        {
+          "wall_time": 1791849750.274252,
+          "p50_ms": 16.8,
+          "p95_ms": 19.2,
+          "fps": 137.0,
+          "decode_ms": 4.5,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1076.7
+        },
+        {
+          "wall_time": 1791849756.40656,
+          "p50_ms": 16.9,
+          "p95_ms": 20.0,
+          "fps": 138.0,
+          "decode_ms": 4.4,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1078.0
+        },
+        {
+          "wall_time": 1791849762.5602229,
+          "p50_ms": 16.7,
+          "p95_ms": 19.8,
+          "fps": 140.0,
+          "decode_ms": 4.1,
+          "target_mbps": 1125.0,
+          "actual_mbps": 1093.8
+        }
+      ],
+      "mean_p50_ms": 16.64,
+      "mean_p95_ms": 19.28,
+      "mean_fps": 138.2,
+      "mean_decode_ms": 4.26,
+      "mean_actual_mbps": 1082.52
+    },
+    "av1-800": {
+      "valid_samples": 0,
+      "samples": []
+    }
+  },
+  "user_observations": {
+    "scene": "live No Man\u2019s Sky; user declined photo mode",
+    "av1_800_motion": "About the same as usual PyroWave",
+    "hevc_800_motion": "About the same as usual PyroWave",
+    "hevc_400_motion": "Superseded by final full-screen landscape check",
+    "method": "User panned across foliage and rocks; codec labels visible; no blinded or identical-frame reference test",
+    "av1_400_motion_initial": "About the same, but portrait downscaling affected the check",
+    "av1_400_motion_landscape": "AV1 looks softer than usual PyroWave",
+    "hevc_400_motion_initial": "About the same detail in the initial check",
+    "hevc_400_motion_landscape_final": "HEVC looks softer than PyroWave"
+  },
+  "measurement": "Mean of sampled HUD capture-to-decoded rolling p50/p95 readings; not aggregate percentiles or input-to-photon latency",
+  "display_note": "AV1 400 repeat was captured in portrait; its latency is retained separately. Final full-screen quality feedback supersedes earlier portrait assessment.",
+  "final_settings": "Original PyroWave settings restored; Turnip retained; no client or host code changed"
+}
