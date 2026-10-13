@@ -47,5 +47,19 @@
   },
   "assessment": "HEVC P4 practically matches visible static detail; no convincing PyroWave detail advantage in the inspected scene. Lighting changed; no host lossless reference or controlled motion replay.",
   "excluded": "Earlier HEVC 30 FPS captures show visible character artifacts while game lacked focus. Clicking game restored 136+ FPS and clean character rendering. Those captures are not normal-performance evidence.",
-  "final_state": "Released APK, HEVC target 800, host P4 retained, full-panel 2520x1680; user must retain game focus after reconnects."
+  "final_state": "Released APK, HEVC target 800, host P4 retained, full-panel 2520x1680; user must retain game focus after reconnects.",
+  "selected_default": {
+    "codec": "hevc",
+    "bitrate_kbps": 800000,
+    "nvenc_preset": 4,
+    "width": 2520,
+    "height": 1680,
+    "refresh_hz": 144,
+    "hdr": true,
+    "bit_depth": 10,
+    "chroma": "4:2:0",
+    "frame_presentation": "arrival",
+    "scope": "selected personal configuration; compiled defaults unchanged",
+    "other_presets_tested": false
+  }
 }

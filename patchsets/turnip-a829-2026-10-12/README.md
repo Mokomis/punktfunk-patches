@@ -8,6 +8,10 @@ Keep: required subgroup size 64 for correct dequantization, packed reconstructio
 
 Rejected experiments and their measurements are retained in the reports. The latest APK is a debug-signed personal build; its version label remains `0.44.0-dev-mokomis.1`. Use its checksum to distinguish it from earlier builds. Install over the same application ID with the same signing key to retain pairing. Do not uninstall to resolve a signature mismatch.
 
+## Current recommended default
+
+Use [HEVC 800 / NVENC P4](CURRENT-STREAMING-DEFAULT.md) at 2520×1680@144 with 10-bit HDR and immediate presentation. The tuned PyroWave/Turnip path remains available as an alternative. No APK or driver rebuild is required for the selected configuration.
+
 ## Build the client
 
 1. Follow the tool setup in `../main-55cc38de-mokomis.1/BUILD-INSTRUCTIONS.md`.
@@ -27,4 +31,6 @@ Start with `turnip-final-validation-report.md`, then `turnip-five-checks-report.
 
 ## HEVC and AV1 comparison
 
-The [live No Man’s Sky codec comparison](codec-comparison/codec-comparison-report.md) tests latency and motion detail without scoring bandwidth. Final full-screen checks favored PyroWave over both codecs at 400 Mb/s. At 800 Mb/s, HEVC looked comparable with similar latency; AV1 looked comparable with higher latency. Evidence is attached to the same release.
+The [final P4 comparison](codec-comparison/hevc-p4-pyrowave-final-report.md) is the current result: HEVC 800/P4 practically matches inspected static detail, with 16.75 ms mean displayed p50 capture-to-decoded latency versus 17.5 ms for tuned PyroWave in two final samples each. Both were verified at 2520×1680; lighting changed and motion fidelity was not tested with an identical replay.
+
+Earlier [live codec observations](codec-comparison/codec-comparison-report.md) are retained, but the approximately 4% display-scaling mismatch confounded their 400 Mb/s softness judgments. Full-panel comparisons removed that mismatch. AV1 is not the selected default. P5–P7 remain untested. Evidence is attached to the same release.

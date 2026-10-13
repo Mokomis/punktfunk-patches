@@ -6,6 +6,10 @@ Archive of tested Windows host and Android client fixes for reuse after official
 
 The [Adreno 829 experiment archive](patchsets/turnip-a829-2026-10-12/) records the tested Mesa driver, client patches, build instructions and performance/corruption comparisons. Its matching GitHub release contains the final personal APK, driver ZIP and experiment evidence. This client uses an app-local driver; it does not replace Android’s system driver.
 
+## Current streaming default
+
+**HEVC, 800 Mb/s target, NVENC P4, 2520×1680@144, 10-bit HDR.** The [default configuration](patchsets/turnip-a829-2026-10-12/CURRENT-STREAMING-DEFAULT.md) records the selected client/host settings and restoration path. The [final comparison](patchsets/turnip-a829-2026-10-12/codec-comparison/hevc-p4-pyrowave-final-report.md) found practically comparable static detail and similar latency to tuned PyroWave. P5–P7 remain untested. This is a personal configuration recommendation; the released APK and driver are unchanged.
+
 ## Windows host patchset
 
 [`patchsets/0.42.0-reconnect-fix.3`](patchsets/0.42.0-reconnect-fix.3) targets **v0.42.0**, commit `8f046f239f3d6dcfc1fa0a25343be926a233a5a5`. The tested executable identifies itself as `0.42.0+reconnect-fix.3`.

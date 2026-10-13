@@ -22,3 +22,7 @@ The preceding quick comparison incorrectly called the PyroWave switch unverified
 ## Final state
 
 The released client APK and custom Turnip driver are unchanged. HEVC target 800 and requested Windows NVENC P4 remain active, with full-panel 2520×1680 retained for matching display dimensions. The earlier native safe-area setting is not restored at the end of this phase. No orientation lock, driver change or thermal override was applied. Original preference backups remain private. The desktop preset launcher retains a restore option for host settings. P5–P7 were not tested.
+
+## Selected default
+
+The user selected HEVC target 800, host NVENC P4, full-panel 2520×1680@144, 10-bit HDR and arrival/immediate presentation as the current personal default. P5–P7 remain untested. No new APK or driver build changes compiled defaults. See CURRENT-STREAMING-DEFAULT.md for settings and restoration.
