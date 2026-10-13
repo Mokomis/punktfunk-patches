@@ -1,5 +1,9 @@
 # No Man’s Sky codec comparison — October 12, 2026
 
+## Photo-mode follow-up and correction
+
+Subsequent photo-mode captures found a roughly 4.1% horizontal scaling mismatch in the original comparison. Earlier softness reports therefore do not isolate codec quality. With matched full-panel dimensions, PyroWave and HEVC 800 look very close, with no convincing static-image winner. See [the photo follow-up](photo-codec-comparison-report.md). The measured latency results below remain the recorded live-run results.
+
 For this live scene, PyroWave with the tested Turnip client retained more visible motion detail than HEVC or AV1 at 400 Mb/s in the user’s final full-screen checks. At 800 Mb/s, both conventional codecs were reported to look about the same as PyroWave. HEVC at that setting had similar measured latency; AV1’s latency was substantially higher.
 
 Bandwidth was not scored or restricted to a common budget. The practical conclusion is to keep PyroWave for this quality-first setup. High-bitrate HEVC remains a competitive alternative; this test does not establish a clear quality or latency victory over HEVC at 800 Mb/s.
