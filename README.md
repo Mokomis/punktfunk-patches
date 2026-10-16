@@ -28,6 +28,7 @@ All build the Android client under the application id `io.unom.punktfunk.mokomis
 
 | Patchset | Base | Use with |
 |---|---|---|
+| [`patchsets/main-55cc38de-mokomis.1`](patchsets/main-55cc38de-mokomis.1) | upstream `main`, `55cc38de8a20` (Oct 11, 2026) | **Not yet built or run.** The `0.43.1-mokomis.2` series ported to upstream's latest code, without 4:4:4 and the PyroWave pin patch, plus the three host fixes upstream still lacks. Build steps: [`BUILD-INSTRUCTIONS.md`](patchsets/main-55cc38de-mokomis.1/BUILD-INSTRUCTIONS.md). |
 | [`patchsets/0.43.1-mokomis.2`](patchsets/0.43.1-mokomis.2) | v0.43.1, `a75ca9f7a09c` | A 0.42.0 or 0.43 host. **Current.** The full `0.42.0-mokomis.8` series ported to 0.43.1. Streams against a 0.42.0 host; not yet run against a 0.43.1 one. |
 | [`patchsets/0.42.0-mokomis.8`](patchsets/0.42.0-mokomis.8) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Shows Frame presentation in the controller interface, lets presets carry it, and adds per-title presets to the touch library. |
 | [`patchsets/0.42.0-mokomis.7`](patchsets/0.42.0-mokomis.7) | v0.42.0, `8f046f239f3d6dcfc1fa0a25343be926a233a5a5` | A 0.42.0 host. Adds a Frame presentation setting that removes heavy judder on hardware-decoded (HEVC/AV1) streams on this tablet. |
